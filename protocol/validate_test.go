@@ -39,6 +39,13 @@ func TestValidateSessionStart(t *testing.T) {
 			wantErr: ErrMissingPartyKey,
 		},
 		{
+			name: "missing identity public key",
+			mutate: func(start *SessionStart) {
+				start.Participants[0].IdentityPublicKey = nil
+			},
+			wantErr: ErrMissingIdentityPublicKey,
+		},
+		{
 			name: "invalid threshold",
 			mutate: func(start *SessionStart) {
 				start.Threshold = 3
@@ -176,7 +183,7 @@ func TestValidatePeerMessage(t *testing.T) {
 			wantErr: ErrInvalidRouting,
 		},
 		{
-			name: "broadcast packet with nonce",
+			name: "broadcast packet is rejected",
 			msg: &PeerMessage{
 				SessionID:         "session-1",
 				Sequence:          1,
@@ -217,10 +224,10 @@ func TestSigningBytesDeterministic(t *testing.T) {
 		SessionID:         "session-1",
 		Sequence:          1,
 		FromParticipantID: "p1",
-		Broadcast:         true,
+		ToParticipantID:   "p2",
 		Phase:             ParticipantPhaseMPCRunning,
 		Signature:         []byte("ignored"),
-		MPCPacket:         &MPCPacket{Payload: []byte("payload")},
+		MPCPacket:         &MPCPacket{Payload: []byte("payload"), Nonce: []byte("nonce")},
 	}
 
 	first, err := PeerSigningBytes(message)
@@ -248,10 +255,52 @@ func validSessionStart() *SessionStart {
 		Operation: OperationTypeKeygen,
 		Threshold: 1,
 		Participants: []*SessionParticipant{
-			{ParticipantID: "p1", PartyKey: []byte{1}},
-			{ParticipantID: "p2", PartyKey: []byte{2}},
+			{ParticipantID: "p1", PartyKey: []byte{1}, IdentityPublicKey: []byte{11}},
+			{ParticipantID: "p2", PartyKey: []byte{2}, IdentityPublicKey: []byte{22}},
 		},
 		Keygen: &KeygenPayload{KeyID: "key-1"},
+	}
+}
+
+func TestValidateSessionEvent(t *testing.T) {
+	t.Parallel()
+
+	valid := &SessionEvent{
+		SessionID:     "session-1",
+		ParticipantID: "p1",
+		Sequence:      1,
+		Signature:     []byte{1},
+		PeerReady:     &PeerReady{ParticipantID: "p1"},
+	}
+	if err := ValidateSessionEvent(valid); err != nil {
+		t.Fatalf("ValidateSessionEvent() error = %v", err)
+	}
+
+	invalid := *valid
+	invalid.Signature = nil
+	if err := ValidateSessionEvent(&invalid); !isErr(err, ErrMissingSignature) {
+		t.Fatalf("ValidateSessionEvent() error = %v, want %v", err, ErrMissingSignature)
+	}
+}
+
+func TestValidatePresenceEvent(t *testing.T) {
+	t.Parallel()
+
+	valid := &PresenceEvent{
+		PeerID:         "peer-1",
+		Status:         PresenceStatusOnline,
+		Transport:      TransportTypeNATS,
+		ConnectionID:   "conn-1",
+		LastSeenUnixMs: 1,
+	}
+	if err := ValidatePresenceEvent(valid); err != nil {
+		t.Fatalf("ValidatePresenceEvent() error = %v", err)
+	}
+
+	invalid := *valid
+	invalid.ConnectionID = ""
+	if err := ValidatePresenceEvent(&invalid); !isErr(err, ErrInvalidPayload) {
+		t.Fatalf("ValidatePresenceEvent() error = %v, want %v", err, ErrInvalidPayload)
 	}
 }
 

@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"fmt"
 	"testing"
+	"time"
 
 	ecdsaKeygen "github.com/bnb-chain/tss-lib/v2/ecdsa/keygen"
 	"github.com/vietddude/mpcium-sdk/protocol"
@@ -26,9 +27,9 @@ func TestSessionECDSAKeygenAndSign(t *testing.T) {
 		Operation: protocol.OperationTypeKeygen,
 		Threshold: 1,
 		Participants: []*protocol.SessionParticipant{
-			{ParticipantID: participants[0].id.ParticipantID(), PartyKey: []byte{1}},
-			{ParticipantID: participants[1].id.ParticipantID(), PartyKey: []byte{2}},
-			{ParticipantID: participants[2].id.ParticipantID(), PartyKey: []byte{3}},
+			{ParticipantID: participants[0].id.ParticipantID(), PartyKey: []byte{1}, IdentityPublicKey: participants[0].id.pub},
+			{ParticipantID: participants[1].id.ParticipantID(), PartyKey: []byte{2}, IdentityPublicKey: participants[1].id.pub},
+			{ParticipantID: participants[2].id.ParticipantID(), PartyKey: []byte{3}, IdentityPublicKey: participants[2].id.pub},
 		},
 		Keygen: &protocol.KeygenPayload{KeyID: "ecdsa-key"},
 	}
@@ -57,9 +58,9 @@ func TestSessionECDSAKeygenAndSign(t *testing.T) {
 		Operation: protocol.OperationTypeSign,
 		Threshold: 1,
 		Participants: []*protocol.SessionParticipant{
-			{ParticipantID: participants[0].id.ParticipantID(), PartyKey: []byte{1}},
-			{ParticipantID: participants[1].id.ParticipantID(), PartyKey: []byte{2}},
-			{ParticipantID: participants[2].id.ParticipantID(), PartyKey: []byte{3}},
+			{ParticipantID: participants[0].id.ParticipantID(), PartyKey: []byte{1}, IdentityPublicKey: participants[0].id.pub},
+			{ParticipantID: participants[1].id.ParticipantID(), PartyKey: []byte{2}, IdentityPublicKey: participants[1].id.pub},
+			{ParticipantID: participants[2].id.ParticipantID(), PartyKey: []byte{3}, IdentityPublicKey: participants[2].id.pub},
 		},
 		Sign: &protocol.SignPayload{KeyID: "ecdsa-key", SigningInput: []byte("ecdsa-message")},
 	}
@@ -85,9 +86,9 @@ func TestSessionEdDSAKeygenAndSign(t *testing.T) {
 		Operation: protocol.OperationTypeKeygen,
 		Threshold: 1,
 		Participants: []*protocol.SessionParticipant{
-			{ParticipantID: participants[0].id.ParticipantID(), PartyKey: []byte{1}},
-			{ParticipantID: participants[1].id.ParticipantID(), PartyKey: []byte{2}},
-			{ParticipantID: participants[2].id.ParticipantID(), PartyKey: []byte{3}},
+			{ParticipantID: participants[0].id.ParticipantID(), PartyKey: []byte{1}, IdentityPublicKey: participants[0].id.pub},
+			{ParticipantID: participants[1].id.ParticipantID(), PartyKey: []byte{2}, IdentityPublicKey: participants[1].id.pub},
+			{ParticipantID: participants[2].id.ParticipantID(), PartyKey: []byte{3}, IdentityPublicKey: participants[2].id.pub},
 		},
 		Keygen: &protocol.KeygenPayload{KeyID: "eddsa-key"},
 	}
@@ -106,9 +107,9 @@ func TestSessionEdDSAKeygenAndSign(t *testing.T) {
 		Operation: protocol.OperationTypeSign,
 		Threshold: 1,
 		Participants: []*protocol.SessionParticipant{
-			{ParticipantID: participants[0].id.ParticipantID(), PartyKey: []byte{1}},
-			{ParticipantID: participants[1].id.ParticipantID(), PartyKey: []byte{2}},
-			{ParticipantID: participants[2].id.ParticipantID(), PartyKey: []byte{3}},
+			{ParticipantID: participants[0].id.ParticipantID(), PartyKey: []byte{1}, IdentityPublicKey: participants[0].id.pub},
+			{ParticipantID: participants[1].id.ParticipantID(), PartyKey: []byte{2}, IdentityPublicKey: participants[1].id.pub},
+			{ParticipantID: participants[2].id.ParticipantID(), PartyKey: []byte{3}, IdentityPublicKey: participants[2].id.pub},
 		},
 		Sign: &protocol.SignPayload{KeyID: "eddsa-key", SigningInput: []byte("eddsa-message")},
 	}
@@ -133,8 +134,8 @@ func TestSessionRejectsMPCBeginBeforeKeyExchange(t *testing.T) {
 		Operation: protocol.OperationTypeKeygen,
 		Threshold: 1,
 		Participants: []*protocol.SessionParticipant{
-			{ParticipantID: participants[0].id.ParticipantID(), PartyKey: []byte{1}},
-			{ParticipantID: participants[1].id.ParticipantID(), PartyKey: []byte{2}},
+			{ParticipantID: participants[0].id.ParticipantID(), PartyKey: []byte{1}, IdentityPublicKey: participants[0].id.pub},
+			{ParticipantID: participants[1].id.ParticipantID(), PartyKey: []byte{2}, IdentityPublicKey: participants[1].id.pub},
 		},
 		Keygen: &protocol.KeygenPayload{KeyID: "k"},
 	}
@@ -292,20 +293,37 @@ func processQueue(
 	t.Helper()
 	for step := 0; step < 200000 && len(results) < len(sessions); step++ {
 		if len(*pending) == 0 {
-			return
+			progressed := false
+			for id, session := range sessions {
+				effects, err := session.Tick(time.Now())
+				if err != nil {
+					t.Fatalf("Tick() for %s error = %v", id, err)
+				}
+				if effects.Result != nil {
+					results[id] = effects.Result
+				}
+				if len(effects.PeerMessages) > 0 {
+					progressed = true
+				}
+				*pending = appendPending(*pending, id, effects.PeerMessages)
+			}
+			if !progressed {
+				return
+			}
+			continue
 		}
 		next := (*pending)[0]
 		*pending = (*pending)[1:]
 
 		targets := make([]string, 0, len(sessions))
-		if next.msg.Broadcast {
+		if next.msg.ToParticipantID != "" {
+			targets = append(targets, next.msg.ToParticipantID)
+		} else if next.msg.Broadcast {
 			for id := range sessions {
 				if id != next.sender {
 					targets = append(targets, id)
 				}
 			}
-		} else {
-			targets = append(targets, next.msg.ToParticipantID)
 		}
 
 		for _, targetID := range targets {

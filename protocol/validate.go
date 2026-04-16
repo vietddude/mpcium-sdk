@@ -12,8 +12,10 @@ var (
 	ErrMissingSessionID            = errors.New("protocol: missing session_id")
 	ErrMissingParticipantID        = errors.New("protocol: missing participant_id")
 	ErrMissingPartyKey             = errors.New("protocol: missing party_key")
+	ErrMissingIdentityPublicKey    = errors.New("protocol: missing identity_public_key")
 	ErrDuplicateParticipantID      = errors.New("protocol: duplicate participant_id")
 	ErrDuplicatePartyKey           = errors.New("protocol: duplicate party_key")
+	ErrDuplicateIdentityPublicKey  = errors.New("protocol: duplicate identity_public_key")
 	ErrInvalidThreshold            = errors.New("protocol: invalid threshold")
 	ErrInvalidPayload              = errors.New("protocol: invalid operation payload")
 	ErrMissingSignature            = errors.New("protocol: missing signature")
@@ -21,6 +23,7 @@ var (
 	ErrInvalidPhase                = errors.New("protocol: invalid phase")
 	ErrInvalidControlMessageBody   = errors.New("protocol: invalid control message body")
 	ErrInvalidPeerMessageBody      = errors.New("protocol: invalid peer message body")
+	ErrInvalidSessionEventBody     = errors.New("protocol: invalid session event body")
 	ErrParticipantNotInSession     = errors.New("protocol: participant not present in session")
 	ErrUnsupportedDerivationOnOp   = errors.New("protocol: derivation is unsupported for operation")
 	ErrUnsupportedDerivationOnAlgo = errors.New("protocol: derivation is unsupported for protocol")
@@ -48,12 +51,16 @@ func ValidateSessionStart(start *SessionStart) error {
 
 	participantIDs := make(map[string]struct{}, len(start.Participants))
 	partyKeys := make(map[string]struct{}, len(start.Participants))
+	identityKeys := make(map[string]struct{}, len(start.Participants))
 	for _, participant := range start.Participants {
 		if participant.ParticipantID == "" {
 			return ErrMissingParticipantID
 		}
 		if len(participant.PartyKey) == 0 {
 			return fmt.Errorf("%w: %s", ErrMissingPartyKey, participant.ParticipantID)
+		}
+		if len(participant.IdentityPublicKey) == 0 {
+			return fmt.Errorf("%w: %s", ErrMissingIdentityPublicKey, participant.ParticipantID)
 		}
 		if _, ok := participantIDs[participant.ParticipantID]; ok {
 			return fmt.Errorf("%w: %s", ErrDuplicateParticipantID, participant.ParticipantID)
@@ -62,8 +69,13 @@ func ValidateSessionStart(start *SessionStart) error {
 		if _, ok := partyKeys[key]; ok {
 			return fmt.Errorf("%w: %s", ErrDuplicatePartyKey, participant.ParticipantID)
 		}
+		identity := string(participant.IdentityPublicKey)
+		if _, ok := identityKeys[identity]; ok {
+			return fmt.Errorf("%w: %s", ErrDuplicateIdentityPublicKey, participant.ParticipantID)
+		}
 		participantIDs[participant.ParticipantID] = struct{}{}
 		partyKeys[key] = struct{}{}
+		identityKeys[identity] = struct{}{}
 	}
 
 	switch start.Operation {
@@ -180,21 +192,76 @@ func ValidatePeerMessage(msg *PeerMessage) error {
 		if len(msg.MPCPacket.Payload) == 0 {
 			return ErrInvalidPeerMessageBody
 		}
-		if msg.Broadcast {
-			if msg.ToParticipantID != "" {
-				return fmt.Errorf("%w: broadcast message has recipient", ErrInvalidRouting)
-			}
-			if len(msg.MPCPacket.Nonce) != 0 {
-				return fmt.Errorf("%w: broadcast packet must not include nonce", ErrInvalidRouting)
-			}
-		} else if msg.ToParticipantID == "" {
+		if msg.ToParticipantID == "" {
 			return fmt.Errorf("%w: direct packet missing recipient", ErrInvalidRouting)
-		} else if len(msg.MPCPacket.Nonce) == 0 {
+		}
+		if len(msg.MPCPacket.Nonce) == 0 {
 			return fmt.Errorf("%w: direct packet missing nonce", ErrInvalidRouting)
 		}
 	}
 	if bodyCount != 1 {
 		return ErrInvalidPeerMessageBody
+	}
+	return nil
+}
+
+func ValidateSessionEvent(msg *SessionEvent) error {
+	if msg == nil {
+		return ErrNilMessage
+	}
+	if msg.SessionID == "" {
+		return ErrMissingSessionID
+	}
+	if msg.ParticipantID == "" {
+		return fmt.Errorf("%w: participant_id", ErrInvalidPayload)
+	}
+	if len(msg.Signature) == 0 {
+		return ErrMissingSignature
+	}
+
+	bodyCount := 0
+	if msg.PeerJoined != nil {
+		bodyCount++
+	}
+	if msg.PeerReady != nil {
+		bodyCount++
+	}
+	if msg.PeerKeyExchangeDone != nil {
+		bodyCount++
+	}
+	if msg.PeerFailed != nil {
+		bodyCount++
+	}
+	if msg.SessionCompleted != nil {
+		bodyCount++
+	}
+	if msg.SessionFailed != nil {
+		bodyCount++
+	}
+	if bodyCount != 1 {
+		return ErrInvalidSessionEventBody
+	}
+	return nil
+}
+
+func ValidatePresenceEvent(msg *PresenceEvent) error {
+	if msg == nil {
+		return ErrNilMessage
+	}
+	if msg.PeerID == "" {
+		return fmt.Errorf("%w: peer_id", ErrInvalidPayload)
+	}
+	if msg.Status != PresenceStatusOnline && msg.Status != PresenceStatusOffline {
+		return fmt.Errorf("%w: status", ErrInvalidPayload)
+	}
+	if msg.Transport != TransportTypeNATS && msg.Transport != TransportTypeMQTT {
+		return fmt.Errorf("%w: transport", ErrInvalidPayload)
+	}
+	if msg.LastSeenUnixMs <= 0 {
+		return fmt.Errorf("%w: last_seen_unix_ms", ErrInvalidPayload)
+	}
+	if msg.Status == PresenceStatusOnline && msg.ConnectionID == "" {
+		return fmt.Errorf("%w: connection_id", ErrInvalidPayload)
 	}
 	return nil
 }

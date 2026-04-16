@@ -37,3 +37,20 @@ func MustPeerSigningBytes(msg *PeerMessage) []byte {
 	}
 	return bytes
 }
+
+func SessionEventSigningBytes(msg *SessionEvent) ([]byte, error) {
+	if msg == nil {
+		return nil, ErrNilMessage
+	}
+	cloned := *msg
+	cloned.Signature = nil
+	return MarshalJSON(&cloned)
+}
+
+func MustSessionEventSigningBytes(msg *SessionEvent) []byte {
+	bytes, err := SessionEventSigningBytes(msg)
+	if err != nil {
+		panic(fmt.Sprintf("protocol: session event signing bytes: %v", err))
+	}
+	return bytes
+}

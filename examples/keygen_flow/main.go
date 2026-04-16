@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"fmt"
 	"log"
+	"time"
 
 	"github.com/vietddude/mpcium-sdk/participant"
 	"github.com/vietddude/mpcium-sdk/protocol"
@@ -27,9 +28,9 @@ func main() {
 		Operation: protocol.OperationTypeKeygen,
 		Threshold: 1,
 		Participants: []*protocol.SessionParticipant{
-			{ParticipantID: participants[0].id.ParticipantID(), PartyKey: []byte{1}},
-			{ParticipantID: participants[1].id.ParticipantID(), PartyKey: []byte{2}},
-			{ParticipantID: participants[2].id.ParticipantID(), PartyKey: []byte{3}},
+			{ParticipantID: participants[0].id.ParticipantID(), PartyKey: []byte{1}, IdentityPublicKey: participants[0].id.pub},
+			{ParticipantID: participants[1].id.ParticipantID(), PartyKey: []byte{2}, IdentityPublicKey: participants[1].id.pub},
+			{ParticipantID: participants[2].id.ParticipantID(), PartyKey: []byte{3}, IdentityPublicKey: participants[2].id.pub},
 		},
 		Keygen: &protocol.KeygenPayload{KeyID: "demo-wallet-key-1"},
 	}
@@ -129,20 +130,37 @@ func processQueue(
 ) error {
 	for step := 0; step < 200000 && len(results) < len(sessions); step++ {
 		if len(*pending) == 0 {
-			return nil
+			progressed := false
+			for id, session := range sessions {
+				effects, err := session.Tick(time.Now())
+				if err != nil {
+					return fmt.Errorf("Tick %s: %w", id, err)
+				}
+				if effects.Result != nil {
+					results[id] = effects.Result
+				}
+				if len(effects.PeerMessages) > 0 {
+					progressed = true
+				}
+				*pending = appendPending(*pending, id, effects.PeerMessages)
+			}
+			if !progressed {
+				return nil
+			}
+			continue
 		}
 		next := (*pending)[0]
 		*pending = (*pending)[1:]
 
 		targets := make([]string, 0, len(sessions))
-		if next.msg.Broadcast {
+		if next.msg.ToParticipantID != "" {
+			targets = append(targets, next.msg.ToParticipantID)
+		} else if next.msg.Broadcast {
 			for id := range sessions {
 				if id != next.sender {
 					targets = append(targets, id)
 				}
 			}
-		} else {
-			targets = append(targets, next.msg.ToParticipantID)
 		}
 
 		for _, targetID := range targets {

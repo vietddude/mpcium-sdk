@@ -51,8 +51,9 @@ const (
 )
 
 type SessionParticipant struct {
-	ParticipantID string `json:"participant_id"`
-	PartyKey      []byte `json:"party_key"`
+	ParticipantID     string `json:"participant_id"`
+	PartyKey          []byte `json:"party_key"`
+	IdentityPublicKey []byte `json:"identity_public_key,omitempty"`
 }
 
 type NonHardenedDerivation struct {
@@ -183,12 +184,49 @@ type SessionEvent struct {
 	SessionID           string               `json:"session_id"`
 	ParticipantID       string               `json:"participant_id"`
 	Sequence            uint64               `json:"sequence"`
+	Signature           []byte               `json:"signature,omitempty"`
 	PeerJoined          *PeerJoined          `json:"peer_joined,omitempty"`
 	PeerReady           *PeerReady           `json:"peer_ready,omitempty"`
 	PeerKeyExchangeDone *PeerKeyExchangeDone `json:"peer_key_exchange_done,omitempty"`
 	PeerFailed          *PeerFailed          `json:"peer_failed,omitempty"`
 	SessionCompleted    *SessionCompleted    `json:"session_completed,omitempty"`
 	SessionFailed       *SessionFailed       `json:"session_failed,omitempty"`
+}
+
+type PresenceStatus string
+
+const (
+	PresenceStatusUnspecified PresenceStatus = "UNSPECIFIED"
+	PresenceStatusOnline      PresenceStatus = "ONLINE"
+	PresenceStatusOffline     PresenceStatus = "OFFLINE"
+)
+
+type TransportType string
+
+const (
+	TransportTypeUnspecified TransportType = "UNSPECIFIED"
+	TransportTypeNATS        TransportType = "NATS"
+	TransportTypeMQTT        TransportType = "MQTT"
+)
+
+type PresenceEvent struct {
+	PeerID         string         `json:"peer_id"`
+	Status         PresenceStatus `json:"status"`
+	Transport      TransportType  `json:"transport"`
+	ConnectionID   string         `json:"connection_id,omitempty"`
+	LastSeenUnixMs int64          `json:"last_seen_unix_ms"`
+}
+
+type RequestAccepted struct {
+	Accepted  bool   `json:"accepted"`
+	SessionID string `json:"session_id"`
+	ExpiresAt string `json:"expires_at"`
+}
+
+type RequestRejected struct {
+	Accepted     bool   `json:"accepted"`
+	ErrorCode    string `json:"error_code"`
+	ErrorMessage string `json:"error_message"`
 }
 
 func MarshalJSON(msg any) ([]byte, error) {

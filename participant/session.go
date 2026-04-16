@@ -150,10 +150,16 @@ func (s *ParticipantSession) Start() (Effects, error) {
 	s.status.Phase = protocol.ParticipantPhaseJoining
 	joined := s.newEvent()
 	joined.PeerJoined = &protocol.PeerJoined{ParticipantID: s.cfg.LocalParticipantID}
+	if err := s.signSessionEvent(joined); err != nil {
+		return Effects{}, err
+	}
 
 	s.status.Phase = protocol.ParticipantPhaseReady
 	ready := s.newEvent()
 	ready.PeerReady = &protocol.PeerReady{ParticipantID: s.cfg.LocalParticipantID}
+	if err := s.signSessionEvent(ready); err != nil {
+		return Effects{}, err
+	}
 
 	if err := s.saveArtifacts(); err != nil {
 		return Effects{}, err
@@ -214,6 +220,9 @@ func (s *ParticipantSession) HandleControl(msg *protocol.ControlMessage) (Effect
 		s.resetKeyExchangeState()
 		event := s.newEvent()
 		event.SessionFailed = &protocol.SessionFailed{Reason: msg.SessionAbort.Reason, Detail: msg.SessionAbort.Detail}
+		if err := s.signSessionEvent(event); err != nil {
+			return s.fail(protocol.FailureReasonTSSError, err.Error()), err
+		}
 		_ = s.dropArtifacts()
 		return Effects{
 			SessionEvents: []*protocol.SessionEvent{event},
@@ -231,7 +240,7 @@ func (s *ParticipantSession) HandlePeer(msg *protocol.PeerMessage) (Effects, err
 	if msg.SessionID != s.cfg.Start.SessionID {
 		return Effects{}, fmt.Errorf("%w: peer session mismatch", protocol.ErrMissingSessionID)
 	}
-	if !msg.Broadcast && msg.ToParticipantID != s.cfg.LocalParticipantID {
+	if msg.ToParticipantID != s.cfg.LocalParticipantID {
 		return Effects{}, fmt.Errorf("%w: message not for local participant", protocol.ErrInvalidRouting)
 	}
 	if msg.FromParticipantID == s.cfg.LocalParticipantID {
@@ -263,13 +272,9 @@ func (s *ParticipantSession) HandlePeer(msg *protocol.PeerMessage) (Effects, err
 		return Effects{}, protocol.ErrInvalidPeerMessageBody
 	}
 
-	wirePayload := msg.MPCPacket.Payload
-	if !msg.Broadcast {
-		var err error
-		wirePayload, err = s.decryptDirectPacket(msg)
-		if err != nil {
-			return s.fail(protocol.FailureReasonDecryptFailed, err.Error()), err
-		}
+	wirePayload, err := s.decryptDirectPacket(msg)
+	if err != nil {
+		return s.fail(protocol.FailureReasonDecryptFailed, err.Error()), err
 	}
 	if _, err := s.party.UpdateFromBytes(wirePayload, from, msg.Broadcast); err != nil {
 		return s.fail(protocol.FailureReasonTSSError, err.Error()), fmt.Errorf("participant: update from bytes: %w", err)
@@ -286,7 +291,17 @@ func (s *ParticipantSession) HandlePeer(msg *protocol.PeerMessage) (Effects, err
 }
 
 func (s *ParticipantSession) Tick(_ time.Time) (Effects, error) {
-	return Effects{}, nil
+	if s.party == nil || !s.party.Running() {
+		return Effects{}, nil
+	}
+	effects, err := s.collectRuntimeEffects()
+	if err != nil {
+		return s.fail(protocol.FailureReasonTSSError, err.Error()), err
+	}
+	if err := s.saveArtifacts(); err != nil {
+		return Effects{}, err
+	}
+	return effects, nil
 }
 
 func (s *ParticipantSession) Status() Status {
@@ -387,6 +402,9 @@ func (s *ParticipantSession) handleKeyExchangeHello(msg *protocol.PeerMessage) (
 	s.status.Phase = protocol.ParticipantPhaseKeyExchangeDone
 	event := s.newEvent()
 	event.PeerKeyExchangeDone = &protocol.PeerKeyExchangeDone{ParticipantID: s.cfg.LocalParticipantID}
+	if err := s.signSessionEvent(event); err != nil {
+		return Effects{}, err
+	}
 	return Effects{SessionEvents: []*protocol.SessionEvent{event}}, nil
 }
 
@@ -403,6 +421,19 @@ func (s *ParticipantSession) decryptDirectPacket(msg *protocol.PeerMessage) ([]b
 
 func (s *ParticipantSession) signPeerMessage(msg *protocol.PeerMessage) error {
 	sigPayload, err := protocol.PeerSigningBytes(msg)
+	if err != nil {
+		return err
+	}
+	sig, err := s.cfg.Identity.Sign(sigPayload)
+	if err != nil {
+		return err
+	}
+	msg.Signature = sig
+	return nil
+}
+
+func (s *ParticipantSession) signSessionEvent(msg *protocol.SessionEvent) error {
+	sigPayload, err := protocol.SessionEventSigningBytes(msg)
 	if err != nil {
 		return err
 	}
@@ -510,6 +541,9 @@ func (s *ParticipantSession) curve() (elliptic.Curve, error) {
 
 func (s *ParticipantSession) collectRuntimeEffects() (Effects, error) {
 	effects := Effects{}
+	idle := 10 * time.Millisecond
+	timer := time.NewTimer(idle)
+	defer timer.Stop()
 	for {
 		select {
 		case msg := <-s.outCh:
@@ -518,7 +552,14 @@ func (s *ParticipantSession) collectRuntimeEffects() (Effects, error) {
 				return Effects{}, err
 			}
 			effects.PeerMessages = append(effects.PeerMessages, peerMessages...)
-		default:
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			timer.Reset(1 * time.Millisecond)
+		case <-timer.C:
 			goto ENDS
 		}
 	}
@@ -632,6 +673,9 @@ func (s *ParticipantSession) complete(result *Result) Effects {
 	s.resetKeyExchangeState()
 	event := s.newEvent()
 	event.SessionCompleted = &protocol.SessionCompleted{Result: result}
+	if err := s.signSessionEvent(event); err != nil {
+		return s.fail(protocol.FailureReasonTSSError, err.Error())
+	}
 	_ = s.dropArtifacts()
 	return Effects{
 		Result:        result,
@@ -647,6 +691,7 @@ func (s *ParticipantSession) fail(reason protocol.FailureReason, details string)
 	s.resetKeyExchangeState()
 	event := s.newEvent()
 	event.SessionFailed = &protocol.SessionFailed{Reason: reason, Detail: details}
+	_ = s.signSessionEvent(event)
 	_ = s.dropArtifacts()
 	return Effects{
 		SessionEvents: []*protocol.SessionEvent{event},
@@ -680,41 +725,40 @@ func (s *ParticipantSession) makePeerMessages(message tss.Message) ([]*protocol.
 			Phase:             protocol.ParticipantPhaseMPCRunning,
 			MPCPacket:         &protocol.MPCPacket{},
 		}
-		if broadcast {
-			peer.MPCPacket.Payload = cloneBytes(payload)
-		} else {
-			if !s.keyExchangeDone || s.kxLocalKey == nil {
-				return nil, ErrKeyExchangeRequired
-			}
-			peerPub, ok := s.peerX25519Pub[recipient]
-			if !ok || len(peerPub) == 0 {
-				return nil, fmt.Errorf("%w: missing peer key for %s", ErrKeyExchangeState, recipient)
-			}
-			nonce, ciphertext, err := wirecrypto.EncryptDirect(s.kxLocalKey, peerPub, peer, payload)
-			if err != nil {
-				return nil, err
-			}
-			peer.MPCPacket.Nonce = nonce
-			peer.MPCPacket.Payload = ciphertext
+		if !s.keyExchangeDone || s.kxLocalKey == nil {
+			return nil, ErrKeyExchangeRequired
 		}
+		peerPub, ok := s.peerX25519Pub[recipient]
+		if !ok || len(peerPub) == 0 {
+			return nil, fmt.Errorf("%w: missing peer key for %s", ErrKeyExchangeState, recipient)
+		}
+		nonce, ciphertext, err := wirecrypto.EncryptDirect(s.kxLocalKey, peerPub, peer, payload)
+		if err != nil {
+			return nil, err
+		}
+		peer.MPCPacket.Nonce = nonce
+		peer.MPCPacket.Payload = ciphertext
 		if err := s.signPeerMessage(peer); err != nil {
 			return nil, err
 		}
 		return peer, nil
 	}
 
+	targets := make([]string, 0, len(routing.To))
+	isBroadcast := routing.IsBroadcast || len(routing.To) == 0
 	if routing.IsBroadcast || len(routing.To) == 0 {
-		message, err := toPeerMessage("", true)
-		if err != nil {
-			return nil, err
+		for _, peerID := range s.otherParticipantIDs() {
+			targets = append(targets, peerID)
 		}
-		return []*protocol.PeerMessage{message}, nil
+	} else {
+		for _, target := range routing.To {
+			targets = append(targets, target.Id)
+		}
 	}
 
-	messages := make([]*protocol.PeerMessage, 0, len(routing.To))
-	for _, target := range routing.To {
-		recipient := target.Id
-		message, err := toPeerMessage(recipient, false)
+	messages := make([]*protocol.PeerMessage, 0, len(targets))
+	for _, recipient := range targets {
+		message, err := toPeerMessage(recipient, isBroadcast)
 		if err != nil {
 			return nil, err
 		}
