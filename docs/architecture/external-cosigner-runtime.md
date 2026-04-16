@@ -291,23 +291,17 @@ Relay should not mutate session payload shape.
 
 ## Message Model
 
-All messages use an envelope with explicit versioning and typed payloads.
+MVP messages use minimal typed envelopes. Extra observability metadata can be added in later phases.
 
 ### Control Envelope
 
 ```json
 {
-  "v": 1,
   "type": "session.start",
   "session_id": "sess_01HXYZ",
   "op": "sign",
-  "request_id": "req_01HXYZ",
-  "correlation_id": "corr_01HXYZ",
   "from": "coordinator",
   "to": "peer-mobile-01",
-  "ts": "2026-04-16T10:00:00Z",
-  "ttl_sec": 120,
-  "sig": "base64(coordinator_signature)",
   "body": {}
 }
 ```
@@ -324,17 +318,12 @@ Control message types:
 
 ```json
 {
-  "v": 1,
   "type": "mpc.packet",
   "session_id": "sess_01HXYZ",
-  "op": "sign",
   "from": "peer-node-01",
   "to": "peer-mobile-01",
   "round": 2,
-  "seq": 14,
-  "ts": "2026-04-16T10:00:08Z",
   "encryption": {
-    "alg": "x25519-chacha20poly1305",
     "kid": "kx_01",
     "nonce": "base64(...)"
   },
@@ -346,12 +335,9 @@ Control message types:
 
 ```json
 {
-  "v": 1,
   "type": "peer.joined",
   "session_id": "sess_01HXYZ",
-  "op": "sign",
   "from": "peer-mobile-01",
-  "ts": "2026-04-16T10:00:03Z",
   "body": {}
 }
 ```
@@ -370,13 +356,9 @@ Session event types:
 
 ```json
 {
-  "v": 1,
   "type": "peer.presence",
   "peer_id": "peer-mobile-01",
-  "status": "online",
-  "transport": "mqtt",
-  "conn_id": "conn_8f3a",
-  "last_seen_at": "2026-04-16T10:00:01Z"
+  "status": "online"
 }
 ```
 
@@ -388,16 +370,11 @@ Session event types:
 {
   "threshold": 2,
   "participants": [
-    { "peer_id": "peer-node-01", "transport": "nats" },
-    { "peer_id": "peer-node-02", "transport": "nats" },
-    { "peer_id": "peer-mobile-01", "transport": "mqtt" }
+    { "peer_id": "peer-node-01" },
+    { "peer_id": "peer-node-02" },
+    { "peer_id": "peer-mobile-01" }
   ],
-  "key_type": "secp256k1",
-  "payload": {
-    "wallet_id": "wallet_123",
-    "tx_id": "tx_456",
-    "tx_hash": "0xabc"
-  }
+  "payload": {}
 }
 ```
 
@@ -405,13 +382,7 @@ Session event types:
 
 ```json
 {
-  "exchange_id": "kx_01",
-  "curve": "x25519",
-  "participants": [
-    "peer-node-01",
-    "peer-node-02",
-    "peer-mobile-01"
-  ]
+  "exchange_id": "kx_01"
 }
 ```
 
@@ -421,12 +392,10 @@ This message is sent peer-to-peer during round 0. It is not encrypted yet, but i
 
 ```json
 {
-  "v": 1,
   "type": "key_exchange.hello",
   "session_id": "sess_01HXYZ",
   "from": "peer-mobile-01",
   "to": "peer-node-01",
-  "ts": "2026-04-16T10:00:05Z",
   "body": {
     "exchange_id": "kx_01",
     "identity_key_id": "id_mobile_01",
@@ -441,13 +410,13 @@ This message is sent peer-to-peer during round 0. It is not encrypted yet, but i
 - Control messages are signed by `Coordinator`.
 - Key exchange hello messages are signed by the sender identity.
 - All MPC packets after key exchange are end-to-end encrypted.
+- The packet encryption algorithm is fixed in MVP and not carried per packet.
 - `Relay` must only route based on metadata such as target peer and session.
 - AEAD additional authenticated data should bind at least:
   - `session_id`
   - `from`
   - `to`
   - `round`
-  - `seq`
 
 ## Session Ownership Rules
 

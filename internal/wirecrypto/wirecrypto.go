@@ -58,23 +58,13 @@ func BuildAAD(msg *protocol.PeerMessage) ([]byte, error) {
 	}
 	cloned := *msg
 	cloned.Signature = nil
-	switch body := cloned.Body.(type) {
-	case *protocol.PeerMessage_MpcPacket:
-		if body.MpcPacket == nil {
-			return nil, protocol.ErrInvalidPeerMessageBody
-		}
-		packet := *body.MpcPacket
+	if cloned.MPCPacket != nil {
+		packet := *cloned.MPCPacket
 		packet.Payload = nil
 		packet.Nonce = nil
-		cloned.Body = &protocol.PeerMessage_MpcPacket{MpcPacket: &packet}
-	case *protocol.PeerMessage_KeyExchangeHello:
-		if body.KeyExchangeHello == nil {
-			return nil, protocol.ErrInvalidPeerMessageBody
-		}
-	default:
-		return nil, protocol.ErrInvalidPeerMessageBody
+		cloned.MPCPacket = &packet
 	}
-	return protocol.MarshalDeterministic(&cloned)
+	return protocol.MarshalJSON(&cloned)
 }
 
 func Verify(publicKey ed25519.PublicKey, message, signature []byte) error {
@@ -93,7 +83,7 @@ func EncryptDirect(local *KeyPair, peerPublic []byte, message *protocol.PeerMess
 	if err != nil {
 		return nil, nil, err
 	}
-	key, err := derivePacketKey(local.private, peer, message.GetSessionId(), message.GetFromParticipantId(), message.GetToParticipantId())
+	key, err := derivePacketKey(local.private, peer, message.SessionID, message.FromParticipantID, message.ToParticipantID)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -117,7 +107,7 @@ func DecryptDirect(local *KeyPair, peerPublic []byte, message *protocol.PeerMess
 	if err != nil {
 		return nil, err
 	}
-	key, err := derivePacketKey(local.private, peer, message.GetSessionId(), message.GetFromParticipantId(), message.GetToParticipantId())
+	key, err := derivePacketKey(local.private, peer, message.SessionID, message.FromParticipantID, message.ToParticipantID)
 	if err != nil {
 		return nil, err
 	}

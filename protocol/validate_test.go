@@ -6,8 +6,6 @@ import (
 	"errors"
 	"strings"
 	"testing"
-
-	"google.golang.org/protobuf/proto"
 )
 
 func TestValidateSessionStart(t *testing.T) {
@@ -18,15 +16,11 @@ func TestValidateSessionStart(t *testing.T) {
 		mutate  func(start *SessionStart)
 		wantErr error
 	}{
-		{
-			name:    "valid keygen",
-			mutate:  func(*SessionStart) {},
-			wantErr: nil,
-		},
+		{name: "valid keygen", mutate: func(*SessionStart) {}, wantErr: nil},
 		{
 			name: "duplicate participant id",
 			mutate: func(start *SessionStart) {
-				start.Participants[1].ParticipantId = start.Participants[0].ParticipantId
+				start.Participants[1].ParticipantID = start.Participants[0].ParticipantID
 			},
 			wantErr: ErrDuplicateParticipantID,
 		},
@@ -54,27 +48,19 @@ func TestValidateSessionStart(t *testing.T) {
 		{
 			name: "missing sign input",
 			mutate: func(start *SessionStart) {
-				start.Operation = OperationType_OPERATION_TYPE_SIGN
-				start.Payload = &SessionStart_Sign{
-					Sign: &SignPayload{KeyId: "key-1"},
-				}
+				start.Operation = OperationTypeSign
+				start.Keygen = nil
+				start.Sign = &SignPayload{KeyID: "key-1"}
 			},
 			wantErr: ErrInvalidPayload,
 		},
 		{
 			name: "eddsa derivation unsupported",
 			mutate: func(start *SessionStart) {
-				start.Protocol = ProtocolType_PROTOCOL_TYPE_EDDSA
-				start.Operation = OperationType_OPERATION_TYPE_SIGN
-				start.Payload = &SessionStart_Sign{
-					Sign: &SignPayload{
-						KeyId:        "key-1",
-						SigningInput: []byte("msg"),
-						Derivation: &NonHardenedDerivation{
-							Delta: []byte{1},
-						},
-					},
-				}
+				start.Protocol = ProtocolTypeEdDSA
+				start.Operation = OperationTypeSign
+				start.Keygen = nil
+				start.Sign = &SignPayload{KeyID: "key-1", SigningInput: []byte("msg"), Derivation: &NonHardenedDerivation{Delta: []byte{1}}}
 			},
 			wantErr: ErrUnsupportedDerivationOnAlgo,
 		},
@@ -101,21 +87,34 @@ func TestValidateControlMessage(t *testing.T) {
 	t.Parallel()
 
 	message := &ControlMessage{
-		SessionId:     "session-1",
-		CoordinatorId: "coordinator-1",
+		SessionID:     "session-1",
+		CoordinatorID: "coordinator-1",
 		Sequence:      1,
 		Signature:     []byte{1},
-		Body: &ControlMessage_SessionStart{
-			SessionStart: validSessionStart(),
-		},
+		SessionStart:  validSessionStart(),
 	}
 	if err := ValidateControlMessage(message); err != nil {
 		t.Fatalf("ValidateControlMessage() error = %v", err)
 	}
 
-	message.SessionId = "other-session"
+	message.SessionID = "other-session"
 	if err := ValidateControlMessage(message); !isErr(err, ErrInvalidControlMessageBody) {
 		t.Fatalf("ValidateControlMessage() error = %v, want %v", err, ErrInvalidControlMessageBody)
+	}
+
+	keyExchange := &ControlMessage{
+		SessionID:     "session-1",
+		CoordinatorID: "coordinator-1",
+		Sequence:      2,
+		Signature:     []byte{1},
+		KeyExchange:   &KeyExchangeBegin{ExchangeID: "kx-1"},
+	}
+	if err := ValidateControlMessage(keyExchange); err != nil {
+		t.Fatalf("ValidateControlMessage(key exchange) error = %v", err)
+	}
+	keyExchange.KeyExchange.ExchangeID = ""
+	if err := ValidateControlMessage(keyExchange); !isErr(err, ErrInvalidControlMessageBody) {
+		t.Fatalf("ValidateControlMessage(missing exchange id) error = %v", err)
 	}
 }
 
@@ -130,42 +129,62 @@ func TestValidatePeerMessage(t *testing.T) {
 		{
 			name: "valid key exchange hello",
 			msg: &PeerMessage{
-				SessionId:         "session-1",
+				SessionID:         "session-1",
 				Sequence:          1,
-				FromParticipantId: "p1",
-				ToParticipantId:   "p2",
-				Phase:             ParticipantPhase_PARTICIPANT_PHASE_KEY_EXCHANGE,
+				FromParticipantID: "p1",
+				ToParticipantID:   "p2",
+				Phase:             ParticipantPhaseKeyExchange,
 				Signature:         []byte{1},
-				Body: &PeerMessage_KeyExchangeHello{
-					KeyExchangeHello: &KeyExchangeHello{X25519PublicKey: []byte{1, 2, 3}},
-				},
+				KeyExchangeHello:  &KeyExchangeHello{ExchangeID: "kx-1", X25519PublicKey: []byte{1, 2, 3}},
 			},
 		},
 		{
-			name: "missing signature on broadcast",
+			name: "missing signature",
 			msg: &PeerMessage{
-				SessionId:         "session-1",
+				SessionID:         "session-1",
 				Sequence:          1,
-				FromParticipantId: "p1",
+				FromParticipantID: "p1",
 				Broadcast:         true,
-				Phase:             ParticipantPhase_PARTICIPANT_PHASE_MPC_RUNNING,
-				Body: &PeerMessage_MpcPacket{
-					MpcPacket: &MpcPacket{Payload: []byte{1}},
-				},
+				Phase:             ParticipantPhaseMPCRunning,
+				MPCPacket:         &MPCPacket{Payload: []byte{1}, Nonce: []byte{}},
 			},
 			wantErr: ErrMissingSignature,
 		},
 		{
+			name: "direct packet missing recipient",
+			msg: &PeerMessage{
+				SessionID:         "session-1",
+				Sequence:          1,
+				FromParticipantID: "p1",
+				Phase:             ParticipantPhaseMPCRunning,
+				Signature:         []byte{1},
+				MPCPacket:         &MPCPacket{Payload: []byte{1}},
+			},
+			wantErr: ErrInvalidRouting,
+		},
+		{
 			name: "direct packet missing nonce",
 			msg: &PeerMessage{
-				SessionId:         "session-1",
+				SessionID:         "session-1",
 				Sequence:          1,
-				FromParticipantId: "p1",
-				ToParticipantId:   "p2",
-				Phase:             ParticipantPhase_PARTICIPANT_PHASE_MPC_RUNNING,
-				Body: &PeerMessage_MpcPacket{
-					MpcPacket: &MpcPacket{Payload: []byte{1}},
-				},
+				FromParticipantID: "p1",
+				ToParticipantID:   "p2",
+				Phase:             ParticipantPhaseMPCRunning,
+				Signature:         []byte{1},
+				MPCPacket:         &MPCPacket{Payload: []byte{1}},
+			},
+			wantErr: ErrInvalidRouting,
+		},
+		{
+			name: "broadcast packet with nonce",
+			msg: &PeerMessage{
+				SessionID:         "session-1",
+				Sequence:          1,
+				FromParticipantID: "p1",
+				Broadcast:         true,
+				Phase:             ParticipantPhaseMPCRunning,
+				Signature:         []byte{1},
+				MPCPacket:         &MPCPacket{Payload: []byte{1}, Nonce: []byte{1}},
 			},
 			wantErr: ErrInvalidRouting,
 		},
@@ -195,22 +214,20 @@ func TestSigningBytesDeterministic(t *testing.T) {
 	}
 
 	message := &PeerMessage{
-		SessionId:         "session-1",
+		SessionID:         "session-1",
 		Sequence:          1,
-		FromParticipantId: "p1",
+		FromParticipantID: "p1",
 		Broadcast:         true,
-		Phase:             ParticipantPhase_PARTICIPANT_PHASE_MPC_RUNNING,
+		Phase:             ParticipantPhaseMPCRunning,
 		Signature:         []byte("ignored"),
-		Body: &PeerMessage_MpcPacket{
-			MpcPacket: &MpcPacket{Payload: []byte("payload")},
-		},
+		MPCPacket:         &MPCPacket{Payload: []byte("payload")},
 	}
 
 	first, err := PeerSigningBytes(message)
 	if err != nil {
 		t.Fatalf("PeerSigningBytes() error = %v", err)
 	}
-	second, err := PeerSigningBytes(proto.Clone(message).(*PeerMessage))
+	second, err := PeerSigningBytes(message)
 	if err != nil {
 		t.Fatalf("PeerSigningBytes() second error = %v", err)
 	}
@@ -226,17 +243,15 @@ func TestSigningBytesDeterministic(t *testing.T) {
 
 func validSessionStart() *SessionStart {
 	return &SessionStart{
-		SessionId: "session-1",
-		Protocol:  ProtocolType_PROTOCOL_TYPE_ECDSA,
-		Operation: OperationType_OPERATION_TYPE_KEYGEN,
+		SessionID: "session-1",
+		Protocol:  ProtocolTypeECDSA,
+		Operation: OperationTypeKeygen,
 		Threshold: 1,
 		Participants: []*SessionParticipant{
-			{ParticipantId: "p1", PartyKey: []byte{1}},
-			{ParticipantId: "p2", PartyKey: []byte{2}},
+			{ParticipantID: "p1", PartyKey: []byte{1}},
+			{ParticipantID: "p2", PartyKey: []byte{2}},
 		},
-		Payload: &SessionStart_Keygen{
-			Keygen: &KeygenPayload{KeyId: "key-1"},
-		},
+		Keygen: &KeygenPayload{KeyID: "key-1"},
 	}
 }
 

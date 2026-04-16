@@ -107,13 +107,12 @@ func TestDirectEncryptionRejectsTamperAndAADMismatch(t *testing.T) {
 
 func validDirectMessage() *protocol.PeerMessage {
 	return &protocol.PeerMessage{
-		SessionId:         "session-1",
+		SessionID:         "session-1",
 		Sequence:          1,
-		FromParticipantId: "p1",
-		ToParticipantId:   "p2",
-		Phase:             protocol.ParticipantPhase_PARTICIPANT_PHASE_MPC_RUNNING,
-		Body: &protocol.PeerMessage_MpcPacket{
-			MpcPacket: &protocol.MpcPacket{},
-		},
+		FromParticipantID: "p1",
+		ToParticipantID:   "p2",
+		Phase:             protocol.ParticipantPhaseMPCRunning,
+		Signature:         []byte{1},
+		MPCPacket:         &protocol.MPCPacket{Nonce: []byte{1}},
 	}
 }

@@ -4,6 +4,7 @@ import "github.com/vietddude/mpcium-sdk/protocol"
 
 type PreparamsStore interface {
 	LoadPreparams(protocol protocol.ProtocolType, keyID string) ([]byte, error)
+	SavePreparams(protocol protocol.ProtocolType, keyID string, preparams []byte) error
 }
 
 type ShareStore interface {

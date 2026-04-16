@@ -2,33 +2,24 @@ package protocol
 
 import (
 	"fmt"
-
-	"google.golang.org/protobuf/proto"
 )
-
-func MarshalDeterministic(msg proto.Message) ([]byte, error) {
-	if msg == nil {
-		return nil, ErrNilMessage
-	}
-	return proto.MarshalOptions{Deterministic: true}.Marshal(msg)
-}
 
 func ControlSigningBytes(msg *ControlMessage) ([]byte, error) {
 	if msg == nil {
 		return nil, ErrNilMessage
 	}
-	cloned := proto.Clone(msg).(*ControlMessage)
+	cloned := *msg
 	cloned.Signature = nil
-	return MarshalDeterministic(cloned)
+	return MarshalJSON(&cloned)
 }
 
 func PeerSigningBytes(msg *PeerMessage) ([]byte, error) {
 	if msg == nil {
 		return nil, ErrNilMessage
 	}
-	cloned := proto.Clone(msg).(*PeerMessage)
+	cloned := *msg
 	cloned.Signature = nil
-	return MarshalDeterministic(cloned)
+	return MarshalJSON(&cloned)
 }
 
 func MustControlSigningBytes(msg *ControlMessage) []byte {

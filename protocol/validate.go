@@ -30,65 +30,71 @@ func ValidateSessionStart(start *SessionStart) error {
 	if start == nil {
 		return ErrNilMessage
 	}
-	if start.GetSessionId() == "" {
+	if start.SessionID == "" {
 		return ErrMissingSessionID
 	}
-	if start.GetProtocol() == ProtocolType_PROTOCOL_TYPE_UNSPECIFIED {
+	if start.Protocol == ProtocolTypeUnspecified {
 		return fmt.Errorf("%w: protocol", ErrInvalidPayload)
 	}
-	if start.GetOperation() == OperationType_OPERATION_TYPE_UNSPECIFIED {
+	if start.Operation == OperationTypeUnspecified {
 		return fmt.Errorf("%w: operation", ErrInvalidPayload)
 	}
-	if len(start.GetParticipants()) == 0 {
+	if len(start.Participants) == 0 {
 		return fmt.Errorf("%w: participants", ErrInvalidPayload)
 	}
-	if int(start.GetThreshold()) < 1 || int(start.GetThreshold()) >= len(start.GetParticipants()) {
+	if int(start.Threshold) < 1 || int(start.Threshold) >= len(start.Participants) {
 		return ErrInvalidThreshold
 	}
 
-	participantIDs := make(map[string]struct{}, len(start.GetParticipants()))
-	partyKeys := make(map[string]struct{}, len(start.GetParticipants()))
-	for _, participant := range start.GetParticipants() {
-		if participant.GetParticipantId() == "" {
+	participantIDs := make(map[string]struct{}, len(start.Participants))
+	partyKeys := make(map[string]struct{}, len(start.Participants))
+	for _, participant := range start.Participants {
+		if participant.ParticipantID == "" {
 			return ErrMissingParticipantID
 		}
-		if len(participant.GetPartyKey()) == 0 {
-			return fmt.Errorf("%w: %s", ErrMissingPartyKey, participant.GetParticipantId())
+		if len(participant.PartyKey) == 0 {
+			return fmt.Errorf("%w: %s", ErrMissingPartyKey, participant.ParticipantID)
 		}
-		if _, ok := participantIDs[participant.GetParticipantId()]; ok {
-			return fmt.Errorf("%w: %s", ErrDuplicateParticipantID, participant.GetParticipantId())
+		if _, ok := participantIDs[participant.ParticipantID]; ok {
+			return fmt.Errorf("%w: %s", ErrDuplicateParticipantID, participant.ParticipantID)
 		}
-		key := string(participant.GetPartyKey())
+		key := string(participant.PartyKey)
 		if _, ok := partyKeys[key]; ok {
-			return fmt.Errorf("%w: %s", ErrDuplicatePartyKey, participant.GetParticipantId())
+			return fmt.Errorf("%w: %s", ErrDuplicatePartyKey, participant.ParticipantID)
 		}
-		participantIDs[participant.GetParticipantId()] = struct{}{}
+		participantIDs[participant.ParticipantID] = struct{}{}
 		partyKeys[key] = struct{}{}
 	}
 
-	switch start.GetOperation() {
-	case OperationType_OPERATION_TYPE_KEYGEN:
-		keygen, ok := start.GetPayload().(*SessionStart_Keygen)
-		if !ok || keygen.Keygen.GetKeyId() == "" {
+	switch start.Operation {
+	case OperationTypeKeygen:
+		if start.Keygen == nil || start.Keygen.KeyID == "" {
 			return fmt.Errorf("%w: keygen", ErrInvalidPayload)
 		}
-	case OperationType_OPERATION_TYPE_SIGN:
-		sign, ok := start.GetPayload().(*SessionStart_Sign)
-		if !ok || sign.Sign.GetKeyId() == "" || len(sign.Sign.GetSigningInput()) == 0 {
+		if start.Sign != nil || start.Reshare != nil {
+			return fmt.Errorf("%w: keygen body collision", ErrInvalidPayload)
+		}
+	case OperationTypeSign:
+		if start.Sign == nil || start.Sign.KeyID == "" || len(start.Sign.SigningInput) == 0 {
 			return fmt.Errorf("%w: sign", ErrInvalidPayload)
 		}
-		if sign.Sign.GetDerivation() != nil && start.GetProtocol() == ProtocolType_PROTOCOL_TYPE_EDDSA {
+		if start.Sign.Derivation != nil && start.Protocol == ProtocolTypeEdDSA {
 			return ErrUnsupportedDerivationOnAlgo
 		}
-	case OperationType_OPERATION_TYPE_RESHARE:
-		reshare, ok := start.GetPayload().(*SessionStart_Reshare)
-		if !ok || reshare.Reshare.GetKeyId() == "" {
+		if start.Keygen != nil || start.Reshare != nil {
+			return fmt.Errorf("%w: sign body collision", ErrInvalidPayload)
+		}
+	case OperationTypeReshare:
+		if start.Reshare == nil || start.Reshare.KeyID == "" {
 			return fmt.Errorf("%w: reshare", ErrInvalidPayload)
 		}
-		if len(reshare.Reshare.GetNewParticipants()) > 0 {
-			if err := validateParticipants(reshare.Reshare.GetNewParticipants(), int(reshare.Reshare.GetNewThreshold())); err != nil {
+		if len(start.Reshare.NewParticipants) > 0 {
+			if err := validateParticipants(start.Reshare.NewParticipants, int(start.Reshare.NewThreshold)); err != nil {
 				return err
 			}
+		}
+		if start.Keygen != nil || start.Sign != nil {
+			return fmt.Errorf("%w: reshare body collision", ErrInvalidPayload)
 		}
 	default:
 		return fmt.Errorf("%w: operation", ErrInvalidPayload)
@@ -101,38 +107,39 @@ func ValidateControlMessage(msg *ControlMessage) error {
 	if msg == nil {
 		return ErrNilMessage
 	}
-	if msg.GetSessionId() == "" {
+	if msg.SessionID == "" {
 		return ErrMissingSessionID
 	}
-	if msg.GetCoordinatorId() == "" {
+	if msg.CoordinatorID == "" {
 		return fmt.Errorf("%w: coordinator_id", ErrInvalidPayload)
 	}
-	if len(msg.GetSignature()) == 0 {
+	if len(msg.Signature) == 0 {
 		return ErrMissingSignature
 	}
 
-	switch body := msg.GetBody().(type) {
-	case *ControlMessage_SessionStart:
-		if body.SessionStart == nil {
-			return ErrInvalidControlMessageBody
-		}
-		if body.SessionStart.GetSessionId() != msg.GetSessionId() {
+	bodyCount := 0
+	if msg.SessionStart != nil {
+		bodyCount++
+		if msg.SessionStart.SessionID != msg.SessionID {
 			return fmt.Errorf("%w: session_id mismatch", ErrInvalidControlMessageBody)
 		}
-		return ValidateSessionStart(body.SessionStart)
-	case *ControlMessage_KeyExchangeBegin:
-		if body.KeyExchangeBegin == nil {
+		if err := ValidateSessionStart(msg.SessionStart); err != nil {
+			return err
+		}
+	}
+	if msg.KeyExchange != nil {
+		bodyCount++
+		if msg.KeyExchange.ExchangeID == "" {
 			return ErrInvalidControlMessageBody
 		}
-	case *ControlMessage_MpcBegin:
-		if body.MpcBegin == nil {
-			return ErrInvalidControlMessageBody
-		}
-	case *ControlMessage_SessionAbort:
-		if body.SessionAbort == nil {
-			return ErrInvalidControlMessageBody
-		}
-	default:
+	}
+	if msg.MPCBegin != nil {
+		bodyCount++
+	}
+	if msg.SessionAbort != nil {
+		bodyCount++
+	}
+	if bodyCount != 1 {
 		return ErrInvalidControlMessageBody
 	}
 	return nil
@@ -142,59 +149,60 @@ func ValidatePeerMessage(msg *PeerMessage) error {
 	if msg == nil {
 		return ErrNilMessage
 	}
-	if msg.GetSessionId() == "" {
+	if msg.SessionID == "" {
 		return ErrMissingSessionID
 	}
-	if msg.GetFromParticipantId() == "" {
+	if msg.FromParticipantID == "" {
 		return fmt.Errorf("%w: from_participant_id", ErrInvalidRouting)
 	}
-	if msg.GetPhase() == ParticipantPhase_PARTICIPANT_PHASE_UNSPECIFIED {
+	if msg.Phase == ParticipantPhaseUnspecified {
 		return ErrInvalidPhase
 	}
-	switch body := msg.GetBody().(type) {
-	case *PeerMessage_KeyExchangeHello:
-		if body.KeyExchangeHello == nil || len(body.KeyExchangeHello.GetX25519PublicKey()) == 0 {
-			return ErrInvalidPeerMessageBody
-		}
-		if msg.GetBroadcast() || msg.GetToParticipantId() == "" {
-			return fmt.Errorf("%w: key exchange hello must be direct", ErrInvalidRouting)
-		}
-		if len(msg.GetSignature()) == 0 {
-			return ErrMissingSignature
-		}
-	case *PeerMessage_MpcPacket:
-		if body.MpcPacket == nil || len(body.MpcPacket.GetPayload()) == 0 {
-			return ErrInvalidPeerMessageBody
-		}
-		if msg.GetBroadcast() {
-			if msg.GetToParticipantId() != "" {
-				return fmt.Errorf("%w: broadcast message has recipient", ErrInvalidRouting)
-			}
-			if len(msg.GetSignature()) == 0 {
-				return ErrMissingSignature
-			}
-			if len(body.MpcPacket.GetNonce()) != 0 {
-				return fmt.Errorf("%w: broadcast packet must not include nonce", ErrInvalidRouting)
-			}
-		} else {
-			if msg.GetToParticipantId() == "" {
-				return fmt.Errorf("%w: direct packet missing recipient", ErrInvalidRouting)
-			}
-			if len(body.MpcPacket.GetNonce()) == 0 {
-				return fmt.Errorf("%w: direct packet missing nonce", ErrInvalidRouting)
-			}
-		}
-	default:
-		return ErrInvalidPeerMessageBody
+	if len(msg.Signature) == 0 {
+		return ErrMissingSignature
 	}
 
+	bodyCount := 0
+	if msg.KeyExchangeHello != nil {
+		bodyCount++
+		if msg.KeyExchangeHello.ExchangeID == "" {
+			return ErrInvalidPeerMessageBody
+		}
+		if len(msg.KeyExchangeHello.X25519PublicKey) == 0 {
+			return ErrInvalidPeerMessageBody
+		}
+		if msg.Broadcast || msg.ToParticipantID == "" {
+			return fmt.Errorf("%w: key exchange hello must be direct", ErrInvalidRouting)
+		}
+	}
+	if msg.MPCPacket != nil {
+		bodyCount++
+		if len(msg.MPCPacket.Payload) == 0 {
+			return ErrInvalidPeerMessageBody
+		}
+		if msg.Broadcast {
+			if msg.ToParticipantID != "" {
+				return fmt.Errorf("%w: broadcast message has recipient", ErrInvalidRouting)
+			}
+			if len(msg.MPCPacket.Nonce) != 0 {
+				return fmt.Errorf("%w: broadcast packet must not include nonce", ErrInvalidRouting)
+			}
+		} else if msg.ToParticipantID == "" {
+			return fmt.Errorf("%w: direct packet missing recipient", ErrInvalidRouting)
+		} else if len(msg.MPCPacket.Nonce) == 0 {
+			return fmt.Errorf("%w: direct packet missing nonce", ErrInvalidRouting)
+		}
+	}
+	if bodyCount != 1 {
+		return ErrInvalidPeerMessageBody
+	}
 	return nil
 }
 
 func CanonicalParticipants(participants []*SessionParticipant) []*SessionParticipant {
 	cloned := slices.Clone(participants)
 	slices.SortFunc(cloned, func(lhs, rhs *SessionParticipant) int {
-		return bytes.Compare(lhs.GetPartyKey(), rhs.GetPartyKey())
+		return bytes.Compare(lhs.PartyKey, rhs.PartyKey)
 	})
 	return cloned
 }
@@ -203,8 +211,8 @@ func FindParticipant(start *SessionStart, participantID string) (*SessionPartici
 	if err := ValidateSessionStart(start); err != nil {
 		return nil, err
 	}
-	for _, participant := range start.GetParticipants() {
-		if participant.GetParticipantId() == participantID {
+	for _, participant := range start.Participants {
+		if participant.ParticipantID == participantID {
 			return participant, nil
 		}
 	}
@@ -213,14 +221,12 @@ func FindParticipant(start *SessionStart, participantID string) (*SessionPartici
 
 func validateParticipants(participants []*SessionParticipant, threshold int) error {
 	start := &SessionStart{
-		SessionId:    "reshare",
-		Protocol:     ProtocolType_PROTOCOL_TYPE_ECDSA,
-		Operation:    OperationType_OPERATION_TYPE_KEYGEN,
+		SessionID:    "reshare",
+		Protocol:     ProtocolTypeECDSA,
+		Operation:    OperationTypeKeygen,
 		Threshold:    uint32(threshold),
 		Participants: participants,
-		Payload: &SessionStart_Keygen{
-			Keygen: &KeygenPayload{KeyId: "reshare"},
-		},
+		Keygen:       &KeygenPayload{KeyID: "reshare"},
 	}
 	return ValidateSessionStart(start)
 }
