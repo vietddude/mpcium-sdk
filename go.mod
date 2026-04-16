@@ -2,7 +2,10 @@ module github.com/vietddude/mpcium-sdk
 
 go 1.26
 
-require github.com/bnb-chain/tss-lib/v2 v2.0.3
+require (
+	github.com/bnb-chain/tss-lib/v2 v2.0.3
+	golang.org/x/crypto v0.13.0
+)
 
 require (
 	github.com/agl/ed25519 v0.0.0-20200225211852-fd4d107ace12 // indirect
@@ -23,7 +26,6 @@ require (
 	go.uber.org/atomic v1.7.0 // indirect
 	go.uber.org/multierr v1.6.0 // indirect
 	go.uber.org/zap v1.16.0 // indirect
-	golang.org/x/crypto v0.13.0 // indirect
 	golang.org/x/sys v0.12.0 // indirect
 	google.golang.org/protobuf v1.31.0 // indirect
 )
