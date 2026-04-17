@@ -54,7 +54,7 @@ type CleanupHint struct {
 	PersistOutcome bool
 }
 
-type Effects struct {
+type Actions struct {
 	PeerMessages  []*protocol.PeerMessage
 	SessionEvents []*protocol.SessionEvent
 	Result        *Result
@@ -143,60 +143,60 @@ func New(cfg Config) (*ParticipantSession, error) {
 	return session, nil
 }
 
-func (s *ParticipantSession) Start() (Effects, error) {
+func (s *ParticipantSession) Start() (Actions, error) {
 	if s.status.Phase != protocol.ParticipantPhaseCreated {
-		return Effects{}, nil
+		return Actions{}, nil
 	}
 	s.status.Phase = protocol.ParticipantPhaseJoining
 	joined := s.newEvent()
 	joined.PeerJoined = &protocol.PeerJoined{ParticipantID: s.cfg.LocalParticipantID}
 	if err := s.signSessionEvent(joined); err != nil {
-		return Effects{}, err
+		return Actions{}, err
 	}
 
 	s.status.Phase = protocol.ParticipantPhaseReady
 	ready := s.newEvent()
 	ready.PeerReady = &protocol.PeerReady{ParticipantID: s.cfg.LocalParticipantID}
 	if err := s.signSessionEvent(ready); err != nil {
-		return Effects{}, err
+		return Actions{}, err
 	}
 
 	if err := s.saveArtifacts(); err != nil {
-		return Effects{}, err
+		return Actions{}, err
 	}
-	return Effects{SessionEvents: []*protocol.SessionEvent{joined, ready}}, nil
+	return Actions{SessionEvents: []*protocol.SessionEvent{joined, ready}}, nil
 }
 
-func (s *ParticipantSession) HandleControl(msg *protocol.ControlMessage) (Effects, error) {
+func (s *ParticipantSession) HandleControl(msg *protocol.ControlMessage) (Actions, error) {
 	if err := protocol.ValidateControlMessage(msg); err != nil {
-		return Effects{}, err
+		return Actions{}, err
 	}
 	if msg.SessionID != s.cfg.Start.SessionID {
-		return Effects{}, fmt.Errorf("%w: %s", protocol.ErrMissingSessionID, msg.SessionID)
+		return Actions{}, fmt.Errorf("%w: %s", protocol.ErrMissingSessionID, msg.SessionID)
 	}
 	if err := s.verifyControlSignature(msg); err != nil {
-		return Effects{}, err
+		return Actions{}, err
 	}
 	if msg.Sequence <= s.controlSeqSeen {
-		return Effects{}, ErrReplayControl
+		return Actions{}, ErrReplayControl
 	}
 	s.controlSeqSeen = msg.Sequence
 
 	switch {
 	case msg.SessionStart != nil:
 		if msg.SessionStart.SessionID != s.cfg.Start.SessionID {
-			return Effects{}, fmt.Errorf("%w: session mismatch", protocol.ErrInvalidControlMessageBody)
+			return Actions{}, fmt.Errorf("%w: session mismatch", protocol.ErrInvalidControlMessageBody)
 		}
-		return Effects{}, nil
+		return Actions{}, nil
 	case msg.KeyExchange != nil:
-		effects, err := s.beginKeyExchange(msg.KeyExchange.ExchangeID)
+		actions, err := s.beginKeyExchange(msg.KeyExchange.ExchangeID)
 		if err != nil {
 			return s.fail(protocol.FailureReasonTSSError, err.Error()), err
 		}
 		if err := s.saveArtifacts(); err != nil {
-			return Effects{}, err
+			return Actions{}, err
 		}
-		return effects, nil
+		return actions, nil
 	case msg.MPCBegin != nil:
 		if !s.keyExchangeDone || s.kxLocalKey == nil {
 			err := ErrKeyExchangeRequired
@@ -205,71 +205,56 @@ func (s *ParticipantSession) HandleControl(msg *protocol.ControlMessage) (Effect
 		if err := s.startLocalParty(); err != nil {
 			return s.fail(protocol.FailureReasonTSSError, err.Error()), err
 		}
-		effects, err := s.collectRuntimeEffects()
+		actions, err := s.collectRuntimeActions()
 		if err != nil {
 			return s.fail(protocol.FailureReasonTSSError, err.Error()), err
 		}
 		if err := s.saveArtifacts(); err != nil {
-			return Effects{}, err
+			return Actions{}, err
 		}
-		return effects, nil
-	case msg.SessionAbort != nil:
-		s.status.Phase = protocol.ParticipantPhaseAborted
-		s.status.FailureReason = msg.SessionAbort.Reason
-		s.status.FailureDetails = msg.SessionAbort.Detail
-		s.resetKeyExchangeState()
-		event := s.newEvent()
-		event.SessionFailed = &protocol.SessionFailed{Reason: msg.SessionAbort.Reason, Detail: msg.SessionAbort.Detail}
-		if err := s.signSessionEvent(event); err != nil {
-			return s.fail(protocol.FailureReasonTSSError, err.Error()), err
-		}
-		_ = s.dropArtifacts()
-		return Effects{
-			SessionEvents: []*protocol.SessionEvent{event},
-			Cleanup:       &CleanupHint{SessionID: s.cfg.Start.SessionID, DropArtifacts: true},
-		}, nil
+		return actions, nil
 	default:
-		return Effects{}, protocol.ErrInvalidControlMessageBody
+		return Actions{}, protocol.ErrInvalidControlMessageBody
 	}
 }
 
-func (s *ParticipantSession) HandlePeer(msg *protocol.PeerMessage) (Effects, error) {
+func (s *ParticipantSession) HandlePeer(msg *protocol.PeerMessage) (Actions, error) {
 	if err := protocol.ValidatePeerMessage(msg); err != nil {
-		return Effects{}, err
+		return Actions{}, err
 	}
 	if msg.SessionID != s.cfg.Start.SessionID {
-		return Effects{}, fmt.Errorf("%w: peer session mismatch", protocol.ErrMissingSessionID)
+		return Actions{}, fmt.Errorf("%w: peer session mismatch", protocol.ErrMissingSessionID)
 	}
 	if msg.ToParticipantID != s.cfg.LocalParticipantID {
-		return Effects{}, fmt.Errorf("%w: message not for local participant", protocol.ErrInvalidRouting)
+		return Actions{}, fmt.Errorf("%w: message not for local participant", protocol.ErrInvalidRouting)
 	}
 	if msg.FromParticipantID == s.cfg.LocalParticipantID {
-		return Effects{}, fmt.Errorf("%w: self peer message", protocol.ErrInvalidRouting)
+		return Actions{}, fmt.Errorf("%w: self peer message", protocol.ErrInvalidRouting)
 	}
 	if err := s.verifyPeerSignature(msg); err != nil {
-		return Effects{}, err
+		return Actions{}, err
 	}
 	if msg.KeyExchangeHello != nil {
-		effects, err := s.handleKeyExchangeHello(msg)
+		actions, err := s.handleKeyExchangeHello(msg)
 		if err != nil {
-			return s.fail(protocol.FailureReasonTSSError, err.Error()), err
+			return Actions{}, err
 		}
 		if err := s.saveArtifacts(); err != nil {
-			return Effects{}, err
+			return Actions{}, err
 		}
-		return effects, nil
+		return actions, nil
 	}
 
 	if s.party == nil || !s.party.Running() {
-		return Effects{}, ErrPartyNotRunning
+		return Actions{}, ErrPartyNotRunning
 	}
 
 	from := s.partyByID[msg.FromParticipantID]
 	if from == nil {
-		return Effects{}, fmt.Errorf("%w: unknown peer %s", protocol.ErrInvalidRouting, msg.FromParticipantID)
+		return Actions{}, fmt.Errorf("%w: unknown peer %s", protocol.ErrInvalidRouting, msg.FromParticipantID)
 	}
 	if msg.MPCPacket == nil {
-		return Effects{}, protocol.ErrInvalidPeerMessageBody
+		return Actions{}, protocol.ErrInvalidPeerMessageBody
 	}
 
 	wirePayload, err := s.decryptDirectPacket(msg)
@@ -280,28 +265,28 @@ func (s *ParticipantSession) HandlePeer(msg *protocol.PeerMessage) (Effects, err
 		return s.fail(protocol.FailureReasonTSSError, err.Error()), fmt.Errorf("participant: update from bytes: %w", err)
 	}
 
-	effects, err := s.collectRuntimeEffects()
+	actions, err := s.collectRuntimeActions()
 	if err != nil {
 		return s.fail(protocol.FailureReasonTSSError, err.Error()), err
 	}
 	if err := s.saveArtifacts(); err != nil {
-		return Effects{}, err
+		return Actions{}, err
 	}
-	return effects, nil
+	return actions, nil
 }
 
-func (s *ParticipantSession) Tick(_ time.Time) (Effects, error) {
+func (s *ParticipantSession) Tick(_ time.Time) (Actions, error) {
 	if s.party == nil || !s.party.Running() {
-		return Effects{}, nil
+		return Actions{}, nil
 	}
-	effects, err := s.collectRuntimeEffects()
+	actions, err := s.collectRuntimeActions()
 	if err != nil {
 		return s.fail(protocol.FailureReasonTSSError, err.Error()), err
 	}
 	if err := s.saveArtifacts(); err != nil {
-		return Effects{}, err
+		return Actions{}, err
 	}
-	return effects, nil
+	return actions, nil
 }
 
 func (s *ParticipantSession) Status() Status {
@@ -347,13 +332,13 @@ func (s *ParticipantSession) verifyPeerSignature(msg *protocol.PeerMessage) erro
 	return nil
 }
 
-func (s *ParticipantSession) beginKeyExchange(exchangeID string) (Effects, error) {
+func (s *ParticipantSession) beginKeyExchange(exchangeID string) (Actions, error) {
 	if exchangeID == "" {
-		return Effects{}, ErrKeyExchangeState
+		return Actions{}, ErrKeyExchangeState
 	}
 	localKey, err := wirecrypto.GenerateKeyPair()
 	if err != nil {
-		return Effects{}, err
+		return Actions{}, err
 	}
 	s.activeExchangeID = exchangeID
 	s.keyExchangeDone = false
@@ -376,26 +361,26 @@ func (s *ParticipantSession) beginKeyExchange(exchangeID string) (Effects, error
 			},
 		}
 		if err := s.signPeerMessage(hello); err != nil {
-			return Effects{}, err
+			return Actions{}, err
 		}
 		peerMessages = append(peerMessages, hello)
 	}
-	return Effects{PeerMessages: peerMessages}, nil
+	return Actions{PeerMessages: peerMessages}, nil
 }
 
-func (s *ParticipantSession) handleKeyExchangeHello(msg *protocol.PeerMessage) (Effects, error) {
+func (s *ParticipantSession) handleKeyExchangeHello(msg *protocol.PeerMessage) (Actions, error) {
 	if s.activeExchangeID == "" || s.kxLocalKey == nil {
-		return Effects{}, ErrKeyExchangeState
+		return Actions{}, ErrKeyExchangeState
 	}
 	if msg.KeyExchangeHello.ExchangeID != s.activeExchangeID {
-		return Effects{}, fmt.Errorf("%w: exchange id mismatch", protocol.ErrInvalidPeerMessageBody)
+		return Actions{}, fmt.Errorf("%w: exchange id mismatch", protocol.ErrInvalidPeerMessageBody)
 	}
 	s.peerX25519Pub[msg.FromParticipantID] = cloneBytes(msg.KeyExchangeHello.X25519PublicKey)
 	if len(s.peerX25519Pub) < len(s.sortedParticipants)-1 {
-		return Effects{}, nil
+		return Actions{}, nil
 	}
 	if s.keyExchangeDone {
-		return Effects{}, nil
+		return Actions{}, nil
 	}
 
 	s.keyExchangeDone = true
@@ -403,9 +388,9 @@ func (s *ParticipantSession) handleKeyExchangeHello(msg *protocol.PeerMessage) (
 	event := s.newEvent()
 	event.PeerKeyExchangeDone = &protocol.PeerKeyExchangeDone{ParticipantID: s.cfg.LocalParticipantID}
 	if err := s.signSessionEvent(event); err != nil {
-		return Effects{}, err
+		return Actions{}, err
 	}
-	return Effects{SessionEvents: []*protocol.SessionEvent{event}}, nil
+	return Actions{SessionEvents: []*protocol.SessionEvent{event}}, nil
 }
 
 func (s *ParticipantSession) decryptDirectPacket(msg *protocol.PeerMessage) ([]byte, error) {
@@ -539,8 +524,8 @@ func (s *ParticipantSession) curve() (elliptic.Curve, error) {
 	}
 }
 
-func (s *ParticipantSession) collectRuntimeEffects() (Effects, error) {
-	effects := Effects{}
+func (s *ParticipantSession) collectRuntimeActions() (Actions, error) {
+	actions := Actions{}
 	idle := 10 * time.Millisecond
 	timer := time.NewTimer(idle)
 	defer timer.Stop()
@@ -549,9 +534,9 @@ func (s *ParticipantSession) collectRuntimeEffects() (Effects, error) {
 		case msg := <-s.outCh:
 			peerMessages, err := s.makePeerMessages(msg)
 			if err != nil {
-				return Effects{}, err
+				return Actions{}, err
 			}
-			effects.PeerMessages = append(effects.PeerMessages, peerMessages...)
+			actions.PeerMessages = append(actions.PeerMessages, peerMessages...)
 			if !timer.Stop() {
 				select {
 				case <-timer.C:
@@ -565,17 +550,17 @@ func (s *ParticipantSession) collectRuntimeEffects() (Effects, error) {
 	}
 
 ENDS:
-	finalEffects, err := s.collectTerminalResult()
+	finalActions, err := s.collectTerminalResult()
 	if err != nil {
-		return Effects{}, err
+		return Actions{}, err
 	}
-	effects.Result = finalEffects.Result
-	effects.Cleanup = finalEffects.Cleanup
-	effects.SessionEvents = append(effects.SessionEvents, finalEffects.SessionEvents...)
-	return effects, nil
+	actions.Result = finalActions.Result
+	actions.Cleanup = finalActions.Cleanup
+	actions.SessionEvents = append(actions.SessionEvents, finalActions.SessionEvents...)
+	return actions, nil
 }
 
-func (s *ParticipantSession) collectTerminalResult() (Effects, error) {
+func (s *ParticipantSession) collectTerminalResult() (Actions, error) {
 	if s.ecdsaKeygenEndCh != nil {
 		select {
 		case data := <-s.ecdsaKeygenEndCh:
@@ -604,19 +589,19 @@ func (s *ParticipantSession) collectTerminalResult() (Effects, error) {
 		default:
 		}
 	}
-	return Effects{}, nil
+	return Actions{}, nil
 }
 
-func (s *ParticipantSession) completeECDSAKeygen(data *ecdsaKeygen.LocalPartySaveData) (Effects, error) {
+func (s *ParticipantSession) completeECDSAKeygen(data *ecdsaKeygen.LocalPartySaveData) (Actions, error) {
 	shareBlob, err := encodeECDSAKeygenShare(data)
 	if err != nil {
-		return Effects{}, err
+		return Actions{}, err
 	}
 	if s.cfg.Shares == nil {
-		return Effects{}, errors.New("participant: missing share store")
+		return Actions{}, errors.New("participant: missing share store")
 	}
 	if err := s.cfg.Shares.SaveShare(s.cfg.Start.Protocol, s.cfg.Start.Keygen.KeyID, shareBlob); err != nil {
-		return Effects{}, err
+		return Actions{}, err
 	}
 	if s.cfg.Preparams != nil {
 		preparamsBlob, encodeErr := encodeECDSAPreparams(&data.LocalPreParams)
@@ -633,16 +618,16 @@ func (s *ParticipantSession) completeECDSAKeygen(data *ecdsaKeygen.LocalPartySav
 	return s.complete(result), nil
 }
 
-func (s *ParticipantSession) completeEdDSAKeygen(data *eddsaKeygen.LocalPartySaveData) (Effects, error) {
+func (s *ParticipantSession) completeEdDSAKeygen(data *eddsaKeygen.LocalPartySaveData) (Actions, error) {
 	shareBlob, err := encodeEdDSAKeygenShare(data)
 	if err != nil {
-		return Effects{}, err
+		return Actions{}, err
 	}
 	if s.cfg.Shares == nil {
-		return Effects{}, errors.New("participant: missing share store")
+		return Actions{}, errors.New("participant: missing share store")
 	}
 	if err := s.cfg.Shares.SaveShare(s.cfg.Start.Protocol, s.cfg.Start.Keygen.KeyID, shareBlob); err != nil {
-		return Effects{}, err
+		return Actions{}, err
 	}
 
 	result := &Result{KeyShare: &protocol.KeyShareResult{
@@ -653,9 +638,9 @@ func (s *ParticipantSession) completeEdDSAKeygen(data *eddsaKeygen.LocalPartySav
 	return s.complete(result), nil
 }
 
-func (s *ParticipantSession) completeSignature(sig *commonSig.SignatureData) (Effects, error) {
+func (s *ParticipantSession) completeSignature(sig *commonSig.SignatureData) (Actions, error) {
 	if sig == nil {
-		return Effects{}, errors.New("participant: nil signature data")
+		return Actions{}, errors.New("participant: nil signature data")
 	}
 	result := &Result{Signature: &protocol.SignatureResult{
 		KeyID:             s.cfg.Start.Sign.KeyID,
@@ -668,7 +653,7 @@ func (s *ParticipantSession) completeSignature(sig *commonSig.SignatureData) (Ef
 	return s.complete(result), nil
 }
 
-func (s *ParticipantSession) complete(result *Result) Effects {
+func (s *ParticipantSession) complete(result *Result) Actions {
 	s.status.Phase = protocol.ParticipantPhaseCompleted
 	s.resetKeyExchangeState()
 	event := s.newEvent()
@@ -677,14 +662,14 @@ func (s *ParticipantSession) complete(result *Result) Effects {
 		return s.fail(protocol.FailureReasonTSSError, err.Error())
 	}
 	_ = s.dropArtifacts()
-	return Effects{
+	return Actions{
 		Result:        result,
 		SessionEvents: []*protocol.SessionEvent{event},
 		Cleanup:       &CleanupHint{SessionID: s.cfg.Start.SessionID, DropArtifacts: true, PersistOutcome: true},
 	}
 }
 
-func (s *ParticipantSession) fail(reason protocol.FailureReason, details string) Effects {
+func (s *ParticipantSession) fail(reason protocol.FailureReason, details string) Actions {
 	s.status.Phase = protocol.ParticipantPhaseFailed
 	s.status.FailureReason = reason
 	s.status.FailureDetails = details
@@ -693,7 +678,7 @@ func (s *ParticipantSession) fail(reason protocol.FailureReason, details string)
 	event.SessionFailed = &protocol.SessionFailed{Reason: reason, Detail: details}
 	_ = s.signSessionEvent(event)
 	_ = s.dropArtifacts()
-	return Effects{
+	return Actions{
 		SessionEvents: []*protocol.SessionEvent{event},
 		Cleanup:       &CleanupHint{SessionID: s.cfg.Start.SessionID, DropArtifacts: true},
 	}

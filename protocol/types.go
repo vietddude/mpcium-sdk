@@ -134,7 +134,7 @@ type PeerMessage struct {
 
 type KeyShareResult struct {
 	KeyID     string `json:"key_id"`
-	ShareBlob []byte `json:"share_blob"`
+	ShareBlob []byte `json:"share_blob,omitempty"`
 	PublicKey []byte `json:"public_key,omitempty"`
 }
 
