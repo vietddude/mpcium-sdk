@@ -3,6 +3,8 @@ plugins {
     id 'org.jetbrains.kotlin.android'
 }
 
+def mpciumMobileAar = file("$rootDir/../../dist/mpcium-mobile.aar")
+
 android {
     namespace 'com.fystack.mpciummobile'
     compileSdk 34
@@ -31,15 +33,28 @@ android {
     }
 }
 
+tasks.register('verifyMpciumMobileAar') {
+    doLast {
+        if (!mpciumMobileAar.exists()) {
+            throw new GradleException("Missing ${mpciumMobileAar}. Run `make mobile-android` from the repository root first.")
+        }
+    }
+}
+
+tasks.named('preBuild') {
+    dependsOn tasks.named('verifyMpciumMobileAar')
+}
+
 dependencies {
     implementation "org.jetbrains.kotlin:kotlin-stdlib:1.9.24"
     implementation 'androidx.core:core-ktx:1.13.1'
     implementation 'androidx.appcompat:appcompat:1.7.0'
     implementation 'com.google.android.material:material:1.12.0'
+    implementation 'androidx.sqlite:sqlite:2.4.0'
 
     implementation 'org.eclipse.paho:org.eclipse.paho.client.mqttv3:1.2.5'
     implementation 'net.zetetic:android-database-sqlcipher:4.5.4'
 
     // Output of `make mobile-android`.
-    implementation files("$rootDir/../../dist/mpcium-mobile.aar")
+    implementation files(mpciumMobileAar)
 }

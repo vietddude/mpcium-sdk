@@ -18,6 +18,10 @@ coverage.*
 profile.cov
 .gocache/
 
+# Generated build artifacts
+/build/
+/dist/
+
 # Dependency directories (remove the comment below to include it)
 # vendor/
 
@@ -32,3 +36,10 @@ go.work.sum
 # .idea/
 # .vscode/
 .codex
+
+# Android sample local/build files
+examples/mobile-android/.gradle/
+examples/mobile-android/.idea/
+examples/mobile-android/build/
+examples/mobile-android/app/build/
+examples/mobile-android/local.properties

@@ -221,6 +221,7 @@ func (r *Runtime) ApproveSign(sessionID string, approved bool, reason string) er
 }
 
 func (r *Runtime) ensureECDSAPreparams() error {
+	r.events.push(newRuntimeEvent("preparams_check_started", "", "ECDSA", "checking ecdsa preparams"))
 	activeSlot, err := r.stores.LoadActivePreparamsSlot(protocol.ProtocolTypeECDSA)
 	if err != nil {
 		return fmt.Errorf("load active ecdsa preparams slot: %w", err)
@@ -231,13 +232,17 @@ func (r *Runtime) ensureECDSAPreparams() error {
 			return fmt.Errorf("load ecdsa preparams slot %q: %w", activeSlot, err)
 		}
 		if len(existing) > 0 {
+			r.events.push(newRuntimeEvent("preparams_ready", "", "ECDSA", "using cached ecdsa preparams slot "+activeSlot))
 			return nil
 		}
+		r.events.push(newRuntimeEvent("preparams_cache_miss", "", "ECDSA", "active ecdsa preparams slot "+activeSlot+" is empty"))
 	}
+	r.events.push(newRuntimeEvent("preparams_generation_started", "", "ECDSA", "generating ecdsa preparams"))
 	preparams, err := ecdsaKeygen.GeneratePreParams(5 * time.Minute)
 	if err != nil {
 		return fmt.Errorf("generate ecdsa preparams: %w", err)
 	}
+	r.events.push(newRuntimeEvent("preparams_generation_completed", "", "ECDSA", "generated ecdsa preparams"))
 	blob, err := encodeECDSAPreparams(preparams)
 	if err != nil {
 		return fmt.Errorf("encode ecdsa preparams: %w", err)
@@ -248,6 +253,7 @@ func (r *Runtime) ensureECDSAPreparams() error {
 	if err := r.stores.SaveActivePreparamsSlot(protocol.ProtocolTypeECDSA, bootstrapPreparamsSlot); err != nil {
 		return fmt.Errorf("save active ecdsa preparams slot: %w", err)
 	}
+	r.events.push(newRuntimeEvent("preparams_ready", "", "ECDSA", "saved ecdsa preparams slot "+bootstrapPreparamsSlot))
 	return nil
 }
 

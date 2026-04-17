@@ -1,11 +1,12 @@
 package com.fystack.mpciummobile
 
 import android.content.Context
+import mobile.StoreAdapter
 import net.sqlcipher.Cursor
 import net.sqlcipher.database.SQLiteDatabase
 import net.sqlcipher.database.SQLiteOpenHelper
 
-class NativeStoreAdapter(context: Context) {
+class NativeStoreAdapter(context: Context) : StoreAdapter {
     private val helper = KvDbHelper(context.applicationContext)
     private val passphrase = SQLiteDatabase.getBytes("mpcium-mobile-v1".toCharArray())
 
@@ -13,8 +14,8 @@ class NativeStoreAdapter(context: Context) {
         SQLiteDatabase.loadLibs(context)
     }
 
-    fun get(key: String): String {
-        val db = helper.readableDatabase(passphrase)
+    override fun get(key: String): String {
+        val db = helper.getReadableDatabase(passphrase)
         val cursor: Cursor = db.rawQuery("SELECT value FROM kv WHERE k = ?", arrayOf(key))
         cursor.use {
             if (!it.moveToFirst()) return ""
@@ -22,16 +23,16 @@ class NativeStoreAdapter(context: Context) {
         }
     }
 
-    fun put(key: String, valueBase64: String) {
-        val db = helper.writableDatabase(passphrase)
+    override fun put(key: String, valueBase64: String) {
+        val db = helper.getWritableDatabase(passphrase)
         db.execSQL(
             "INSERT OR REPLACE INTO kv(k, value) VALUES(?, ?)",
             arrayOf(key, valueBase64),
         )
     }
 
-    fun delete(key: String) {
-        val db = helper.writableDatabase(passphrase)
+    override fun delete(key: String) {
+        val db = helper.getWritableDatabase(passphrase)
         db.execSQL("DELETE FROM kv WHERE k = ?", arrayOf(key))
     }
 

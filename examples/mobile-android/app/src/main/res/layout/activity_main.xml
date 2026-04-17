@@ -12,13 +12,29 @@
         android:text="Participant: -"
         android:textAppearance="@style/TextAppearance.Material3.BodyLarge" />
 
-    <TextView
-        android:id="@+id/publicKey"
+    <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginTop="8dp"
-        android:text="Public key: -"
-        android:textAppearance="@style/TextAppearance.Material3.BodySmall" />
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
+
+        <TextView
+            android:id="@+id/publicKey"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="Public key: -"
+            android:textAppearance="@style/TextAppearance.Material3.BodySmall" />
+
+        <Button
+            android:id="@+id/copyPublicKeyButton"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="8dp"
+            android:enabled="false"
+            android:text="Copy" />
+    </LinearLayout>
 
     <Button
         android:id="@+id/startButton"
@@ -35,12 +51,19 @@
         android:text="Approve SIGN"
         android:enabled="false" />
 
-    <TextView
-        android:id="@+id/logs"
+    <ScrollView
+        android:id="@+id/logScroll"
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:layout_weight="1"
         android:layout_marginTop="16dp"
-        android:text="Events:\n"
-        android:textAppearance="@style/TextAppearance.Material3.BodySmall" />
+        android:fillViewport="true">
+
+        <TextView
+            android:id="@+id/logs"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Events:\n"
+            android:textAppearance="@style/TextAppearance.Material3.BodySmall" />
+    </ScrollView>
 </LinearLayout>

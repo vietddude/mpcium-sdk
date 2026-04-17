@@ -8,21 +8,32 @@ This sample shows the Android host structure for:
 
 ## Build prerequisites
 
-1. Build mobile binding AAR:
+1. Start a local MQTT broker for the emulator:
+
+```bash
+docker run --rm -p 1883:1883 eclipse-mosquitto:2 mosquitto -c /mosquitto-no-auth.conf
+```
+
+2. Build mobile binding AAR:
 
 ```bash
 make mobile-android
 ```
 
-2. Ensure AAR exists at `dist/mpcium-mobile.aar`.
+3. Ensure AAR exists at `dist/mpcium-mobile.aar`.
 
-3. Build sample:
+4. Build sample:
 
 ```bash
-make mobile-android-sample
+cd examples/mobile-android
+JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home" ./gradlew assembleDebug
 ```
+
+5. Install and run the debug APK on an Android emulator, then tap **Start runtime**.
 
 ## Notes
 
-- `MainActivity` currently includes a bootstrap placeholder where Go mobile binding calls should be wired.
-- Adapter classes (`NativeTransportAdapter`, `NativeStoreAdapter`) follow the method contract required by the new mobile facade registration APIs.
+- The emulator reaches the host MQTT broker at `tcp://10.0.2.2:1883`.
+- `MainActivity` registers native adapters, creates `mobile.Client`, starts the runtime, and polls runtime events.
+- The demo coordinator public key is fixed and only intended to satisfy runtime bootstrap validation.
+- Adapter classes (`NativeTransportAdapter`, `NativeStoreAdapter`) implement the generated Go mobile facade interfaces.
