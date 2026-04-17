@@ -32,6 +32,8 @@ Current supported runtime flow:
 - `internal/wirecrypto`: direct packet key exchange/encryption helpers
 - `identity`: identity lookup/signing interfaces
 - `storage`: share/preparams/session artifact interfaces
+- `mobilecore`: mobile runtime core with native transport/store adapters
+- `mobile`: gomobile facade (JSON-first API)
 
 ## Minimal integration example
 
@@ -174,7 +176,33 @@ ECDSA keygen now requires a slot-based preparams store. The legacy single-cache 
   - `to_participant_id` must be empty
   - `nonce` must be empty
 
+## Mobile facade (gomobile)
+
+Public API:
+
+- `NewClient(configJSON string) (*Client, error)`
+- `Start() error`
+- `Stop() error`
+- `PollEvents(max int32) string`
+- `ApproveSign(sessionID string, approved bool, reason string) error`
+- `GetParticipantID() string`
+- `GetIdentityPublicKeyBase64() string`
+
+Adapter registration:
+
+- `RegisterTransportAdapter(adapter TransportAdapter) error`
+- `RegisterStoreAdapter(adapter StoreAdapter) error`
+
+Runtime event types:
+
+- `runtime_started`
+- `presence_online`
+- `sign_approval_required`
+- `session_completed`
+- `session_failed`
+- `runtime_error`
+
 ## Notes
 
 - `RESHARE` is not implemented yet.
-- Mobile bindings are not shipped yet; current implementation is Go core.
+- iOS runtime integration is out of scope for current v1.

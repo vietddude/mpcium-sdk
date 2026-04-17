@@ -1,0 +1,2 @@
+rootProject.name = 'mpcium-mobile-sample'
+include ':app'
