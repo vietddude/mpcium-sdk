@@ -3,8 +3,10 @@ package storage
 import "github.com/vietddude/mpcium-sdk/protocol"
 
 type PreparamsStore interface {
-	LoadPreparams(protocol protocol.ProtocolType, keyID string) ([]byte, error)
-	SavePreparams(protocol protocol.ProtocolType, keyID string, preparams []byte) error
+	LoadPreparamsSlot(protocol protocol.ProtocolType, slot string) ([]byte, error)
+	SavePreparamsSlot(protocol protocol.ProtocolType, slot string, preparams []byte) error
+	LoadActivePreparamsSlot(protocol protocol.ProtocolType) (string, error)
+	SaveActivePreparamsSlot(protocol protocol.ProtocolType, slot string) error
 }
 
 type ShareStore interface {

@@ -145,6 +145,23 @@ The participant runtime expects this sequence:
 
 If `MPCBegin` arrives before key exchange is completed, the session fails with missing prerequisite.
 
+## Preparams Slot Model
+
+ECDSA keygen now requires a slot-based preparams store. The legacy single-cache model is removed.
+
+- `PreparamsStore` must implement:
+  - `LoadPreparamsSlot(protocol, slot)`
+  - `SavePreparamsSlot(protocol, slot, blob)`
+  - `LoadActivePreparamsSlot(protocol)`
+  - `SaveActivePreparamsSlot(protocol, slot)`
+- Runtime behavior:
+  - Session resolves preparams with `pinned_slot -> active_slot` and fails fast on missing/invalid blobs.
+  - Each session pins one slot in local `SessionArtifacts`, so in-flight sessions are deterministic across global rotates.
+  - Successful ECDSA keygen writes new preparams to slot `next`, then rotates active pointer atomically and snapshots previous active into slot `prev`.
+- Integrator requirements:
+  - Seed at least one valid slot and set `active_slot` before running ECDSA keygen.
+  - Update any existing preparams backend to the slot-aware API before upgrading SDK.
+
 ## Protocol rules to enforce in your transport
 
 - Every `ControlMessage` and `PeerMessage` must carry a valid signature.

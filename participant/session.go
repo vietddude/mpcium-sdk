@@ -33,6 +33,14 @@ var (
 	ErrUnsupportedOperation = errors.New("participant: operation is unsupported")
 	ErrKeyExchangeRequired  = errors.New("participant: key exchange required before MPC begin")
 	ErrKeyExchangeState     = errors.New("participant: invalid key exchange state")
+	ErrPreparamsRequired    = errors.New("participant: preparams store is required for ecdsa keygen")
+	ErrPreparamsSlotMissing = errors.New("participant: active preparams slot is missing")
+	ErrPreparamsBlobMissing = errors.New("participant: preparams blob is missing")
+)
+
+const (
+	PreparamsSlotNext = "next"
+	PreparamsSlotPrev = "prev"
 )
 
 type Config struct {
@@ -91,6 +99,7 @@ type ParticipantSession struct {
 	keyExchangeDone  bool
 	kxLocalKey       *wirecrypto.KeyPair
 	peerX25519Pub    map[string][]byte
+	preparamsSlot    string
 }
 
 func New(cfg Config) (*ParticipantSession, error) {
@@ -453,23 +462,12 @@ func (s *ParticipantSession) startLocalParty() error {
 	switch s.cfg.Start.Operation {
 	case protocol.OperationTypeKeygen:
 		if s.cfg.Start.Protocol == protocol.ProtocolTypeECDSA {
-			var preparams *ecdsaKeygen.LocalPreParams
-			if s.cfg.Preparams != nil {
-				blob, err := s.cfg.Preparams.LoadPreparams(s.cfg.Start.Protocol, s.cfg.Start.Keygen.KeyID)
-				if err == nil && len(blob) > 0 {
-					decoded, decodeErr := decodeECDSAPreparams(blob)
-					if decodeErr != nil {
-						return decodeErr
-					}
-					preparams = decoded
-				}
+			preparams, err := s.resolveECDSAPreparams()
+			if err != nil {
+				return err
 			}
 			s.ecdsaKeygenEndCh = make(chan *ecdsaKeygen.LocalPartySaveData, 1)
-			if preparams != nil {
-				s.party = ecdsaKeygen.NewLocalParty(params, s.outCh, s.ecdsaKeygenEndCh, *preparams)
-			} else {
-				s.party = ecdsaKeygen.NewLocalParty(params, s.outCh, s.ecdsaKeygenEndCh)
-			}
+			s.party = ecdsaKeygen.NewLocalParty(params, s.outCh, s.ecdsaKeygenEndCh, *preparams)
 		} else {
 			s.eddsaKeygenEndCh = make(chan *eddsaKeygen.LocalPartySaveData, 1)
 			s.party = eddsaKeygen.NewLocalParty(params, s.outCh, s.eddsaKeygenEndCh)
@@ -522,6 +520,40 @@ func (s *ParticipantSession) curve() (elliptic.Curve, error) {
 	default:
 		return nil, fmt.Errorf("participant: unsupported protocol %q", s.cfg.Start.Protocol)
 	}
+}
+
+func (s *ParticipantSession) resolveECDSAPreparams() (*ecdsaKeygen.LocalPreParams, error) {
+	if s.cfg.Preparams == nil {
+		return nil, ErrPreparamsRequired
+	}
+	slot := s.preparamsSlot
+	if slot == "" {
+		activeSlot, err := s.cfg.Preparams.LoadActivePreparamsSlot(s.cfg.Start.Protocol)
+		if err != nil {
+			return nil, err
+		}
+		if activeSlot == "" {
+			return nil, ErrPreparamsSlotMissing
+		}
+		slot = activeSlot
+		s.preparamsSlot = activeSlot
+		if err := s.saveArtifacts(); err != nil {
+			return nil, err
+		}
+	}
+
+	blob, err := s.cfg.Preparams.LoadPreparamsSlot(s.cfg.Start.Protocol, slot)
+	if err != nil {
+		return nil, err
+	}
+	if len(blob) == 0 {
+		return nil, ErrPreparamsBlobMissing
+	}
+	decoded, err := decodeECDSAPreparams(blob)
+	if err != nil {
+		return nil, err
+	}
+	return decoded, nil
 }
 
 func (s *ParticipantSession) collectRuntimeActions() (Actions, error) {
@@ -603,11 +635,18 @@ func (s *ParticipantSession) completeECDSAKeygen(data *ecdsaKeygen.LocalPartySav
 	if err := s.cfg.Shares.SaveShare(s.cfg.Start.Protocol, s.cfg.Start.Keygen.KeyID, shareBlob); err != nil {
 		return Actions{}, err
 	}
-	if s.cfg.Preparams != nil {
-		preparamsBlob, encodeErr := encodeECDSAPreparams(&data.LocalPreParams)
-		if encodeErr == nil {
-			_ = s.cfg.Preparams.SavePreparams(s.cfg.Start.Protocol, s.cfg.Start.Keygen.KeyID, preparamsBlob)
-		}
+	if s.cfg.Preparams == nil {
+		return Actions{}, ErrPreparamsRequired
+	}
+	preparamsBlob, err := encodeECDSAPreparams(&data.LocalPreParams)
+	if err != nil {
+		return Actions{}, err
+	}
+	if err := s.cfg.Preparams.SavePreparamsSlot(s.cfg.Start.Protocol, PreparamsSlotNext, preparamsBlob); err != nil {
+		return Actions{}, err
+	}
+	if err := RotatePreparamsSlot(s.cfg.Preparams, s.cfg.Start.Protocol, PreparamsSlotNext); err != nil {
+		return Actions{}, err
 	}
 
 	result := &Result{KeyShare: &protocol.KeyShareResult{
@@ -756,7 +795,15 @@ func (s *ParticipantSession) saveArtifacts() error {
 	if s.cfg.SessionArtifacts == nil {
 		return nil
 	}
-	blob, err := encodeStatusArtifact(s.status, s.controlSeqSeen, s.sequence, s.activeExchangeID, s.keyExchangeDone, s.peerX25519Pub)
+	blob, err := encodeStatusArtifact(
+		s.status,
+		s.controlSeqSeen,
+		s.sequence,
+		s.activeExchangeID,
+		s.keyExchangeDone,
+		s.peerX25519Pub,
+		s.preparamsSlot,
+	)
 	if err != nil {
 		return err
 	}
@@ -771,7 +818,7 @@ func (s *ParticipantSession) loadArtifacts() error {
 	if err != nil || len(blob) == 0 {
 		return nil
 	}
-	status, controlSeq, sequence, activeExchangeID, keyExchangeDone, peerX25519, err := decodeStatusArtifact(blob)
+	status, controlSeq, sequence, activeExchangeID, keyExchangeDone, peerX25519, preparamsSlot, err := decodeStatusArtifact(blob)
 	if err != nil {
 		return err
 	}
@@ -782,6 +829,7 @@ func (s *ParticipantSession) loadArtifacts() error {
 		s.activeExchangeID = activeExchangeID
 		s.keyExchangeDone = keyExchangeDone
 		s.peerX25519Pub = clonePeerKeyMap(peerX25519)
+		s.preparamsSlot = preparamsSlot
 		s.kxLocalKey = nil
 		if s.activeExchangeID != "" && !s.keyExchangeDone {
 			s.status.Phase = protocol.ParticipantPhaseKeyExchange
@@ -805,6 +853,7 @@ type statusArtifact struct {
 	ActiveExchangeID string
 	KeyExchangeDone  bool
 	PeerX25519Pub    map[string][]byte
+	PreparamsSlot    string
 }
 
 func encodeStatusArtifact(
@@ -813,6 +862,7 @@ func encodeStatusArtifact(
 	activeExchangeID string,
 	keyExchangeDone bool,
 	peerX25519 map[string][]byte,
+	preparamsSlot string,
 ) ([]byte, error) {
 	var buffer bytes.Buffer
 	artifact := statusArtifact{
@@ -823,6 +873,7 @@ func encodeStatusArtifact(
 		ActiveExchangeID: activeExchangeID,
 		KeyExchangeDone:  keyExchangeDone,
 		PeerX25519Pub:    clonePeerKeyMap(peerX25519),
+		PreparamsSlot:    preparamsSlot,
 	}
 	if err := gob.NewEncoder(&buffer).Encode(&artifact); err != nil {
 		return nil, err
@@ -830,12 +881,12 @@ func encodeStatusArtifact(
 	return buffer.Bytes(), nil
 }
 
-func decodeStatusArtifact(blob []byte) (Status, uint64, uint64, string, bool, map[string][]byte, error) {
+func decodeStatusArtifact(blob []byte) (Status, uint64, uint64, string, bool, map[string][]byte, string, error) {
 	artifact := statusArtifact{}
 	if err := gob.NewDecoder(bytes.NewReader(blob)).Decode(&artifact); err != nil {
-		return Status{}, 0, 0, "", false, nil, err
+		return Status{}, 0, 0, "", false, nil, "", err
 	}
-	return artifact.Status, artifact.ControlSeq, artifact.Sequence, artifact.ActiveExchangeID, artifact.KeyExchangeDone, clonePeerKeyMap(artifact.PeerX25519Pub), nil
+	return artifact.Status, artifact.ControlSeq, artifact.Sequence, artifact.ActiveExchangeID, artifact.KeyExchangeDone, clonePeerKeyMap(artifact.PeerX25519Pub), artifact.PreparamsSlot, nil
 }
 
 func encodeECDSAKeygenShare(data *ecdsaKeygen.LocalPartySaveData) ([]byte, error) {

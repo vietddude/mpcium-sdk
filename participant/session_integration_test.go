@@ -39,8 +39,11 @@ func TestSessionECDSAKeygenAndSign(t *testing.T) {
 		if encodeErr != nil {
 			t.Fatalf("encodeECDSAPreparams() error = %v", encodeErr)
 		}
-		if saveErr := participants[i].preparams.SavePreparams(protocol.ProtocolTypeECDSA, "ecdsa-key", blob); saveErr != nil {
-			t.Fatalf("SavePreparams() error = %v", saveErr)
+		if saveErr := participants[i].preparams.SavePreparamsSlot(protocol.ProtocolTypeECDSA, "bootstrap", blob); saveErr != nil {
+			t.Fatalf("SavePreparamsSlot() error = %v", saveErr)
+		}
+		if saveActiveErr := participants[i].preparams.SaveActivePreparamsSlot(protocol.ProtocolTypeECDSA, "bootstrap"); saveActiveErr != nil {
+			t.Fatalf("SaveActivePreparamsSlot() error = %v", saveActiveErr)
 		}
 	}
 
@@ -187,7 +190,7 @@ func newTestParticipants(count int) ([]participantFixture, coordinatorFixture, e
 		fixtures = append(fixtures, participantFixture{
 			id:        identity,
 			lookup:    peerLookup,
-			preparams: &memoryPreparamsStore{values: map[string][]byte{}},
+			preparams: &memoryPreparamsStore{values: map[string][]byte{}, activeSlots: map[string]string{}},
 			shares:    &memoryShareStore{values: map[string][]byte{}},
 			artifacts: &memorySessionArtifactsStore{values: map[string][]byte{}},
 		})
@@ -385,18 +388,30 @@ func (l *testCoordinatorLookup) LookupCoordinator(coordinatorID string) (ed25519
 	return key, nil
 }
 
-type memoryPreparamsStore struct{ values map[string][]byte }
-
-func (s *memoryPreparamsStore) key(protocolType protocol.ProtocolType, keyID string) string {
-	return string(protocolType) + ":" + keyID
+type memoryPreparamsStore struct {
+	values      map[string][]byte
+	activeSlots map[string]string
 }
 
-func (s *memoryPreparamsStore) LoadPreparams(protocolType protocol.ProtocolType, keyID string) ([]byte, error) {
-	return append([]byte(nil), s.values[s.key(protocolType, keyID)]...), nil
+func (s *memoryPreparamsStore) key(protocolType protocol.ProtocolType, slot string) string {
+	return string(protocolType) + ":" + slot
 }
 
-func (s *memoryPreparamsStore) SavePreparams(protocolType protocol.ProtocolType, keyID string, preparams []byte) error {
-	s.values[s.key(protocolType, keyID)] = append([]byte(nil), preparams...)
+func (s *memoryPreparamsStore) LoadPreparamsSlot(protocolType protocol.ProtocolType, slot string) ([]byte, error) {
+	return append([]byte(nil), s.values[s.key(protocolType, slot)]...), nil
+}
+
+func (s *memoryPreparamsStore) SavePreparamsSlot(protocolType protocol.ProtocolType, slot string, preparams []byte) error {
+	s.values[s.key(protocolType, slot)] = append([]byte(nil), preparams...)
+	return nil
+}
+
+func (s *memoryPreparamsStore) LoadActivePreparamsSlot(protocolType protocol.ProtocolType) (string, error) {
+	return s.activeSlots[string(protocolType)], nil
+}
+
+func (s *memoryPreparamsStore) SaveActivePreparamsSlot(protocolType protocol.ProtocolType, slot string) error {
+	s.activeSlots[string(protocolType)] = slot
 	return nil
 }
 
