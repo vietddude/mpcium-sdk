@@ -43,14 +43,6 @@
         android:layout_marginTop="16dp"
         android:text="Start runtime" />
 
-    <Button
-        android:id="@+id/approveButton"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="8dp"
-        android:text="Approve SIGN"
-        android:enabled="false" />
-
     <ScrollView
         android:id="@+id/logScroll"
         android:layout_width="match_parent"

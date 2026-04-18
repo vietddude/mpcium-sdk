@@ -12,9 +12,11 @@ import android.widget.Button
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import mobile.Client
 import mobile.Mobile
+import org.json.JSONArray
 import org.json.JSONObject
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
@@ -31,7 +33,6 @@ class MainActivity : AppCompatActivity() {
     private lateinit var logs: TextView
     private lateinit var logScroll: ScrollView
     private lateinit var startButton: Button
-    private lateinit var approveButton: Button
     private lateinit var copyPublicKeyButton: Button
 
     // Replace these values with your environment.
@@ -48,6 +49,9 @@ class MainActivity : AppCompatActivity() {
     private var client: Client? = null
     private var transportAdapter: NativeTransportAdapter? = null
     private var identityPublicKeyHex: String = ""
+    private var pendingSignSessionId: String? = null
+    private var signApprovalDialog: AlertDialog? = null
+    private var signApprovalDialogSessionId: String? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -58,7 +62,6 @@ class MainActivity : AppCompatActivity() {
         logs = findViewById(R.id.logs)
         logScroll = findViewById(R.id.logScroll)
         startButton = findViewById(R.id.startButton)
-        approveButton = findViewById(R.id.approveButton)
         copyPublicKeyButton = findViewById(R.id.copyPublicKeyButton)
 
         participantId.text = "Participant: configured in runtime config"
@@ -67,10 +70,6 @@ class MainActivity : AppCompatActivity() {
 
         startButton.setOnClickListener {
             startRuntime()
-        }
-
-        approveButton.setOnClickListener {
-            appendLog("Approve SIGN requires a pending session_id from sign_approval_required.")
         }
 
         copyPublicKeyButton.setOnClickListener {
@@ -123,7 +122,6 @@ class MainActivity : AppCompatActivity() {
                 mainHandler.post {
                     publicKey.text = "Public key: failed to load"
                     startButton.isEnabled = false
-                    approveButton.isEnabled = false
                     copyPublicKeyButton.isEnabled = false
                     appendLog("Client init failed: ${t.message ?: t.javaClass.simpleName}")
                 }
@@ -148,17 +146,12 @@ class MainActivity : AppCompatActivity() {
                 transportAdapter?.open()
                 appendLog("MQTT ready; starting mobile runtime")
 
-                mainHandler.post {
-                    approveButton.isEnabled = true
-                }
-
                 runtimeClient.start()
                 mainHandler.post { appendLog("Runtime start returned; polling events") }
                 startPolling(runtimeClient)
             } catch (t: Throwable) {
                 mainHandler.post {
                     startButton.isEnabled = true
-                    approveButton.isEnabled = false
                     appendLog("Runtime start failed: ${t.message ?: t.javaClass.simpleName}")
                 }
             }
@@ -173,12 +166,100 @@ class MainActivity : AppCompatActivity() {
                 try {
                     val eventsJson = runtimeClient.pollEvents(32)
                     if (eventsJson != "[]") {
-                        mainHandler.post { appendLog(eventsJson) }
+                        mainHandler.post {
+                            appendLog(eventsJson)
+                            handleRuntimeEvents(eventsJson)
+                        }
                     }
                     Thread.sleep(500)
                 } catch (t: Throwable) {
                     mainHandler.post { appendLog("Polling failed: ${t.message ?: t.javaClass.simpleName}") }
                     polling.set(false)
+                }
+            }
+        }
+    }
+
+    private fun handleRuntimeEvents(eventsJson: String) {
+        val events = try {
+            JSONArray(eventsJson)
+        } catch (t: Throwable) {
+            appendLog("Failed to parse runtime events: ${t.message ?: t.javaClass.simpleName}")
+            return
+        }
+
+        for (i in 0 until events.length()) {
+            val event = events.optJSONObject(i) ?: continue
+            val type = event.optString("type")
+            val sessionId = event.optString("session_id")
+            when (type) {
+                "sign_approval_required" -> {
+                    if (sessionId.isBlank()) {
+                        appendLog("SIGN approval event missing session_id")
+                        continue
+                    }
+                    pendingSignSessionId = sessionId
+                    appendLog("SIGN approval pending session=$sessionId")
+                    showSignApprovalDialog(sessionId)
+                }
+
+                "session_completed", "session_failed" -> {
+                    if (sessionId.isNotBlank() && sessionId == pendingSignSessionId) {
+                        clearPendingSignApproval(sessionId)
+                        appendLog("Cleared pending SIGN session=$sessionId after $type")
+                    }
+                }
+            }
+        }
+    }
+
+    private fun showSignApprovalDialog(sessionId: String) {
+        if (signApprovalDialog?.isShowing == true && signApprovalDialogSessionId == sessionId) {
+            return
+        }
+
+        signApprovalDialog?.dismiss()
+        signApprovalDialogSessionId = sessionId
+        signApprovalDialog = AlertDialog.Builder(this)
+            .setTitle("Approve SIGN")
+            .setMessage("SIGN request requires approval.\n\nSession: $sessionId")
+            .setPositiveButton("Approve") { _, _ ->
+                approvePendingSign(sessionId)
+            }
+            .setNegativeButton("Not now", null)
+            .show()
+    }
+
+    private fun clearPendingSignApproval(sessionId: String) {
+        if (pendingSignSessionId == sessionId) {
+            pendingSignSessionId = null
+        }
+        if (signApprovalDialogSessionId == sessionId) {
+            signApprovalDialog?.dismiss()
+            signApprovalDialog = null
+            signApprovalDialogSessionId = null
+        }
+    }
+
+    private fun approvePendingSign(sessionId: String) {
+        val runtimeClient = client
+        if (sessionId.isBlank() || runtimeClient == null || pendingSignSessionId != sessionId) {
+            appendLog("No pending SIGN approval")
+            return
+        }
+
+        appendLog("Approving SIGN session=$sessionId")
+        runtimeExecutor.execute {
+            try {
+                runtimeClient.approveSign(sessionId, true, "")
+                mainHandler.post {
+                    clearPendingSignApproval(sessionId)
+                    appendLog("Approved SIGN session=$sessionId")
+                }
+            } catch (t: Throwable) {
+                mainHandler.post {
+                    appendLog("Approve SIGN failed: ${t.message ?: t.javaClass.simpleName}")
+                    Toast.makeText(this, "Approve SIGN failed", Toast.LENGTH_SHORT).show()
                 }
             }
         }
@@ -204,6 +285,10 @@ class MainActivity : AppCompatActivity() {
             }
         }
         client = null
+        pendingSignSessionId = null
+        signApprovalDialog?.dismiss()
+        signApprovalDialog = null
+        signApprovalDialogSessionId = null
         runtimeExecutor.shutdownNow()
         pollExecutor.shutdown()
         try {
