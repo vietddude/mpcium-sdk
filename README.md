@@ -46,8 +46,8 @@ import (
 	"crypto/ed25519"
 	"fmt"
 
-	"github.com/vietddude/mpcium-sdk/participant"
-	"github.com/vietddude/mpcium-sdk/protocol"
+	"github.com/fystack/mpcium-sdk/participant"
+	"github.com/fystack/mpcium-sdk/protocol"
 )
 
 // 1) Implement required interfaces:

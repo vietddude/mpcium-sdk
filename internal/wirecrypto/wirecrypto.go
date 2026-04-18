@@ -10,7 +10,7 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/vietddude/mpcium-sdk/protocol"
+	"github.com/fystack/mpcium-sdk/protocol"
 	"golang.org/x/crypto/chacha20poly1305"
 )
 

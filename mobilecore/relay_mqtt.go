@@ -7,7 +7,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/vietddude/mpcium-sdk/protocol"
+	"github.com/fystack/mpcium-sdk/protocol"
 )
 
 type TransportAdapter interface {

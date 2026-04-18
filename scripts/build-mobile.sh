@@ -29,10 +29,7 @@ die() { echo "$*" >&2; exit 1; }
 [[ -d "${ANDROID_NDK_HOME:-}" ]] || die "ANDROID_NDK_HOME not set or invalid. Install NDK via sdkmanager."
 command -v javac >/dev/null 2>&1 || die "javac required. Install JDK 17+ and add JAVA_HOME/bin to PATH."
 (( ANDROID_MIN_API >= 21 && ANDROID_MIN_API <= 34 )) || die "ANDROID_MIN_API must be 21–34."
-
-# --- Go toolchain / module safety ---
-GO_BIN="${GO_BIN:-$(command -v go || true)}"
-[[ -n "${GO_BIN}" ]] || die "Go toolchain not found in PATH."
+command -v go >/dev/null 2>&1 || die "Go toolchain not found in PATH."
 
 case " ${GOFLAGS:-} " in
     *" -mod=readonly "*) ;;
@@ -40,40 +37,33 @@ case " ${GOFLAGS:-} " in
     *) export GOFLAGS="${GOFLAGS:+${GOFLAGS} }-mod=readonly" ;;
 esac
 
-go_cmd() { "${GO_BIN}" "$@"; }
-gomobile_cmd() { GOMOBILEDIR="${GOMOBILEDIR}" gomobile "$@"; }
+GOBIN="$(go env GOBIN)"
+[[ -n "${GOBIN}" ]] || GOBIN="$(go env GOPATH)/bin"
+mkdir -p "${GOBIN}"
+export PATH="${GOBIN}:${PATH}"
 
-GOBIN_PATH="$(go_cmd env GOBIN)"
-[[ -n "${GOBIN_PATH}" ]] || GOBIN_PATH="$(go_cmd env GOPATH)/bin"
-mkdir -p "${GOBIN_PATH}"
-export PATH="${GOBIN_PATH}:${PATH}"
-
-# --- Ensure gomobile / gobind ---
+# --- gomobile / gobind (module pins golang.org/x/mobile in go.mod) ---
 go_install() {
     command -v "$1" >/dev/null 2>&1 && return
     echo "Installing $1..."
-    GO111MODULE=on go_cmd install "$2"
+    GO111MODULE=on go install "$2"
 }
 
 go_install gomobile golang.org/x/mobile/cmd/gomobile@latest
 go_install gobind golang.org/x/mobile/cmd/gobind@latest
 
-if ! go_cmd list golang.org/x/mobile/bind >/dev/null 2>&1; then
-    die "Missing module dependency: golang.org/x/mobile/bind. Run once: go get golang.org/x/mobile/bind && go mod tidy"
-fi
+go list ./mobile >/dev/null || die "Module graph error for ./mobile. Run: go mod tidy"
 
-if ! go_cmd list ./mobile >/dev/null 2>&1; then
-    die "Module graph is not read-only clean for ./mobile. Sync deps first with go mod tidy (or add the missing requirements manually)."
-fi
+gomobile_run() { GOMOBILEDIR="${GOMOBILEDIR}" gomobile "$@"; }
 
 # --- Build ---
-[[ "${SKIP_GOMOBILE_INIT:-0}" == "1" ]] || { echo "Running gomobile init..."; gomobile_cmd init -v; }
+[[ "${SKIP_GOMOBILE_INIT:-0}" == "1" ]] || { echo "Running gomobile init..."; gomobile_run init -v; }
 
 mkdir -p "${ANDROID_BUILD_DIR}"
 cd "${REPO_ROOT}"
 
 echo "Building Android AAR..."
-gomobile_cmd bind \
+gomobile_run bind \
     -target="${ANDROID_TARGETS}" \
     -androidapi="${ANDROID_MIN_API}" \
     -o "${OUTPUT_AAR}" \

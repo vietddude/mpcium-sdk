@@ -4,8 +4,8 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/vietddude/mpcium-sdk/protocol"
-	"github.com/vietddude/mpcium-sdk/storage"
+	"github.com/fystack/mpcium-sdk/protocol"
+	"github.com/fystack/mpcium-sdk/storage"
 )
 
 var ErrPreparamsRotateFailed = errors.New("participant: preparams rotation failed")

@@ -1,6 +1,6 @@
 package mobilecore
 
-import "github.com/vietddude/mpcium-sdk/protocol"
+import "github.com/fystack/mpcium-sdk/protocol"
 
 type Subscription interface {
 	Unsubscribe() error

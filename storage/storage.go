@@ -1,6 +1,6 @@
 package storage
 
-import "github.com/vietddude/mpcium-sdk/protocol"
+import "github.com/fystack/mpcium-sdk/protocol"
 
 type PreparamsStore interface {
 	LoadPreparamsSlot(protocol protocol.ProtocolType, slot string) ([]byte, error)

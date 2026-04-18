@@ -8,7 +8,7 @@ import (
 	"time"
 
 	ecdsaKeygen "github.com/bnb-chain/tss-lib/v2/ecdsa/keygen"
-	"github.com/vietddude/mpcium-sdk/protocol"
+	"github.com/fystack/mpcium-sdk/protocol"
 )
 
 func TestSessionECDSAKeygenAndSign(t *testing.T) {

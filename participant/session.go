@@ -19,10 +19,10 @@ import (
 	eddsaKeygen "github.com/bnb-chain/tss-lib/v2/eddsa/keygen"
 	eddsaSigning "github.com/bnb-chain/tss-lib/v2/eddsa/signing"
 	"github.com/bnb-chain/tss-lib/v2/tss"
-	"github.com/vietddude/mpcium-sdk/identity"
-	"github.com/vietddude/mpcium-sdk/internal/wirecrypto"
-	"github.com/vietddude/mpcium-sdk/protocol"
-	"github.com/vietddude/mpcium-sdk/storage"
+	"github.com/fystack/mpcium-sdk/identity"
+	"github.com/fystack/mpcium-sdk/internal/wirecrypto"
+	"github.com/fystack/mpcium-sdk/protocol"
+	"github.com/fystack/mpcium-sdk/storage"
 )
 
 var (

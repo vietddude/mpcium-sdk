@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/vietddude/mpcium-sdk/participant"
-	"github.com/vietddude/mpcium-sdk/protocol"
+	"github.com/fystack/mpcium-sdk/participant"
+	"github.com/fystack/mpcium-sdk/protocol"
 )
 
 func TestHandleControlSignRequiresApproval(t *testing.T) {

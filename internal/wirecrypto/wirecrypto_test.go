@@ -5,7 +5,7 @@ import (
 	"crypto/rand"
 	"testing"
 
-	"github.com/vietddude/mpcium-sdk/protocol"
+	"github.com/fystack/mpcium-sdk/protocol"
 )
 
 func TestVerifyRejectsBadSignature(t *testing.T) {

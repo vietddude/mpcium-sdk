@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/vietddude/mpcium-sdk/protocol"
+	"github.com/fystack/mpcium-sdk/protocol"
 )
 
 const (

@@ -12,8 +12,8 @@ import (
 	"time"
 
 	ecdsaKeygen "github.com/bnb-chain/tss-lib/v2/ecdsa/keygen"
-	"github.com/vietddude/mpcium-sdk/participant"
-	"github.com/vietddude/mpcium-sdk/protocol"
+	"github.com/fystack/mpcium-sdk/participant"
+	"github.com/fystack/mpcium-sdk/protocol"
 )
 
 const bootstrapPreparamsSlot = "bootstrap"
