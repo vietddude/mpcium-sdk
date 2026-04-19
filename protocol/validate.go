@@ -49,33 +49,36 @@ func ValidateSessionStart(start *SessionStart) error {
 		return ErrInvalidThreshold
 	}
 
-	participantIDs := make(map[string]struct{}, len(start.Participants))
-	partyKeys := make(map[string]struct{}, len(start.Participants))
-	identityKeys := make(map[string]struct{}, len(start.Participants))
-	for _, participant := range start.Participants {
-		if participant.ParticipantID == "" {
+	n := len(start.Participants)
+	participantIDs := make(map[string]struct{}, n)
+	partyKeys := make(map[string]struct{}, n)
+	identityKeys := make(map[string]struct{}, n)
+	addUnique := func(set map[string]struct{}, key, pid string, dupErr error) error {
+		if _, ok := set[key]; ok {
+			return fmt.Errorf("%w: %s", dupErr, pid)
+		}
+		set[key] = struct{}{}
+		return nil
+	}
+	for _, p := range start.Participants {
+		if p.ParticipantID == "" {
 			return ErrMissingParticipantID
 		}
-		if len(participant.PartyKey) == 0 {
-			return fmt.Errorf("%w: %s", ErrMissingPartyKey, participant.ParticipantID)
+		if len(p.PartyKey) == 0 {
+			return fmt.Errorf("%w: %s", ErrMissingPartyKey, p.ParticipantID)
 		}
-		if len(participant.IdentityPublicKey) == 0 {
-			return fmt.Errorf("%w: %s", ErrMissingIdentityPublicKey, participant.ParticipantID)
+		if len(p.IdentityPublicKey) == 0 {
+			return fmt.Errorf("%w: %s", ErrMissingIdentityPublicKey, p.ParticipantID)
 		}
-		if _, ok := participantIDs[participant.ParticipantID]; ok {
-			return fmt.Errorf("%w: %s", ErrDuplicateParticipantID, participant.ParticipantID)
+		if err := addUnique(participantIDs, p.ParticipantID, p.ParticipantID, ErrDuplicateParticipantID); err != nil {
+			return err
 		}
-		key := string(participant.PartyKey)
-		if _, ok := partyKeys[key]; ok {
-			return fmt.Errorf("%w: %s", ErrDuplicatePartyKey, participant.ParticipantID)
+		if err := addUnique(partyKeys, string(p.PartyKey), p.ParticipantID, ErrDuplicatePartyKey); err != nil {
+			return err
 		}
-		identity := string(participant.IdentityPublicKey)
-		if _, ok := identityKeys[identity]; ok {
-			return fmt.Errorf("%w: %s", ErrDuplicateIdentityPublicKey, participant.ParticipantID)
+		if err := addUnique(identityKeys, string(p.IdentityPublicKey), p.ParticipantID, ErrDuplicateIdentityPublicKey); err != nil {
+			return err
 		}
-		participantIDs[participant.ParticipantID] = struct{}{}
-		partyKeys[key] = struct{}{}
-		identityKeys[identity] = struct{}{}
 	}
 
 	switch start.Operation {
