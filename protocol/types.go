@@ -133,11 +133,9 @@ type PeerMessage struct {
 }
 
 type KeyShareResult struct {
-	KeyID       string `json:"key_id"`
-	ShareBlob   []byte `json:"share_blob,omitempty"`
-	PublicKey   []byte `json:"public_key,omitempty"`
-	ECDSAPubKey []byte `json:"ecdsa_pubkey,omitempty"`
-	EDDSAPubKey []byte `json:"eddsa_pubkey,omitempty"`
+	KeyID     string `json:"key_id"`
+	ShareBlob []byte `json:"share_blob,omitempty"`
+	PublicKey []byte `json:"public_key,omitempty"`
 }
 
 type SignatureResult struct {

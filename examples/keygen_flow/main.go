@@ -56,9 +56,9 @@ func driveKeygenFlow(
 	sessionID string,
 	sessions map[string]*participant.ParticipantSession,
 	coordinator coordinatorFixture,
-) (map[string]*protocol.Result, error) {
+) (map[string]*participant.Result, error) {
 	pending := make([]queuedMessage, 0, 64)
-	results := make(map[string]*protocol.Result, len(sessions))
+	results := make(map[string]*participant.Result, len(sessions))
 
 	for id, sess := range sessions {
 		effects, err := sess.Start()
@@ -126,7 +126,7 @@ func driveKeygenFlow(
 func processQueue(
 	sessions map[string]*participant.ParticipantSession,
 	pending *[]queuedMessage,
-	results map[string]*protocol.Result,
+	results map[string]*participant.Result,
 ) error {
 	for step := 0; step < 200000 && len(results) < len(sessions); step++ {
 		if len(*pending) == 0 {
