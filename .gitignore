@@ -17,10 +17,13 @@ coverage.*
 *.coverprofile
 profile.cov
 .gocache/
+.cache/
 
 # Generated build artifacts
 /build/
 /dist/
+bindings/mobile/build/
+bindings/mobile/dist/
 
 # Dependency directories (remove the comment below to include it)
 # vendor/
@@ -43,3 +46,15 @@ examples/mobile-android/.idea/
 examples/mobile-android/build/
 examples/mobile-android/app/build/
 examples/mobile-android/local.properties
+
+# Flutter mobile sample local/build files
+examples/mobile-flutter/.dart_tool/
+examples/mobile-flutter/.flutter-plugins
+examples/mobile-flutter/.flutter-plugins-dependencies
+examples/mobile-flutter/.metadata
+examples/mobile-flutter/build/
+examples/mobile-flutter/android/.gradle/
+examples/mobile-flutter/android/build/
+examples/mobile-flutter/android/app/build/
+examples/mobile-flutter/android/local.properties
+examples/mobile-flutter/android/app/.cxx/

@@ -1,0 +1,53 @@
+plugins {
+    id "com.android.application"
+    id "org.jetbrains.kotlin.android"
+    id "dev.flutter.flutter-gradle-plugin"
+}
+
+def mpciumMobileAar = file("$rootDir/../../../bindings/mobile/dist/mpcium-mobile.aar")
+
+android {
+    namespace "com.fystack.mpciumflutter"
+    compileSdk flutter.compileSdkVersion
+    ndkVersion flutter.ndkVersion
+
+    defaultConfig {
+        applicationId "com.fystack.mpciumflutter"
+        minSdk 26
+        targetSdk flutter.targetSdkVersion
+        versionCode flutter.versionCode
+        versionName flutter.versionName
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    kotlinOptions {
+        jvmTarget = "17"
+    }
+}
+
+flutter {
+    source "../.."
+}
+
+tasks.register("verifyMpciumMobileAar") {
+    doLast {
+        if (!mpciumMobileAar.exists()) {
+            throw new GradleException("Missing ${mpciumMobileAar}. Run `make mobile-android` from the repository root first.")
+        }
+    }
+}
+
+tasks.named("preBuild") {
+    dependsOn tasks.named("verifyMpciumMobileAar")
+}
+
+dependencies {
+    implementation files(mpciumMobileAar)
+    implementation "androidx.sqlite:sqlite:2.4.0"
+    implementation "org.eclipse.paho:org.eclipse.paho.client.mqttv3:1.2.5"
+    implementation "net.zetetic:android-database-sqlcipher:4.5.4"
+}
