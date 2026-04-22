@@ -1,0 +1,61 @@
+syntax = "proto3";
+
+package coordinator.v1;
+
+option go_package = "github.com/fystack/mpcium-sdk/integrations/coordinator-grpc/proto/coordinator/v1;coordinatorv1";
+
+service CoordinatorOrchestration {
+  rpc Keygen(KeygenRequest) returns (RequestAccepted);
+  rpc Sign(SignRequest) returns (RequestAccepted);
+  rpc WaitSessionResult(SessionLookup) returns (SessionResult);
+}
+
+message Participant {
+  string id = 1;
+  string identity_public_key_hex = 2;
+}
+
+message KeygenRequest {
+  string protocol = 1;
+  uint32 threshold = 2;
+  string wallet_id = 3;
+  repeated Participant participants = 4;
+}
+
+message SignRequest {
+  string protocol = 1;
+  uint32 threshold = 2;
+  string wallet_id = 3;
+  string signing_input_hex = 4;
+  repeated Participant participants = 5;
+  repeated uint32 derivation_path = 6;
+  string derivation_delta_hex = 7;
+}
+
+message SessionLookup {
+  string session_id = 1;
+}
+
+message RequestAccepted {
+  bool accepted = 1;
+  string session_id = 2;
+  string expires_at = 3;
+  string error_code = 4;
+  string error_message = 5;
+}
+
+message SessionResult {
+  bool completed = 1;
+  string session_id = 2;
+  string key_id = 3;
+  string public_key_hex = 4;
+  string signature_hex = 5;
+  string signature_recovery_hex = 6;
+  string r_hex = 7;
+  string s_hex = 8;
+  string signed_input_hex = 9;
+  string error_code = 10;
+  string error_message = 11;
+  string ecdsa_pubkey = 12;
+  string eddsa_pubkey = 13;
+}

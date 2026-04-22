@@ -32,8 +32,23 @@ Current supported runtime flow:
 - `internal/wirecrypto`: direct packet key exchange/encryption helpers
 - `identity`: identity lookup/signing interfaces
 - `storage`: share/preparams/session artifact interfaces
-- `mobilecore`: mobile runtime core with native transport/store adapters
-- `mobile`: gomobile facade (JSON-first API)
+
+Additional modules in this repo:
+
+- `bindings/mobile`: gomobile facade with native transport/store adapters
+- `integrations/coordinator-grpc`: coordinator orchestration proto and generated gRPC client
+
+## Coordinator gRPC example
+
+The coordinator orchestration proto and generated gRPC client live in `integrations/coordinator-grpc`.
+Run the example from its own module:
+
+```sh
+cd integrations/coordinator-grpc
+go run .
+```
+
+The example submits `Keygen`, waits with `WaitSessionResult`, then submits `Sign` for the same wallet and waits for the signature. Edit the constants and participant public keys at the top of `integrations/coordinator-grpc/main.go` for your local nodes.
 
 ## Minimal integration example
 
