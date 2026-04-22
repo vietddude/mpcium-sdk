@@ -23,4 +23,3 @@ func sessionEventSubject(sessionID string) string {
 func presenceSubject(peerID string) string {
 	return fmt.Sprintf("%s.peer.%s.presence", topicPrefix, peerID)
 }
-

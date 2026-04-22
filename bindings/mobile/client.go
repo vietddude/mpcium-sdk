@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/fystack/mpcium-sdk/mobilecore"
+	"github.com/fystack/mpcium-sdk/bindings/mobile/internal/mobilecore"
 )
 
 type TransportAdapter interface {

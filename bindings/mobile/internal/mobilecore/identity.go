@@ -93,4 +93,3 @@ func generateIdentityPrivateKey() ([]byte, error) {
 	}
 	return append([]byte(nil), privateKey...), nil
 }
-

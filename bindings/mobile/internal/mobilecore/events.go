@@ -59,4 +59,3 @@ func MarshalEvents(events []RuntimeEvent) string {
 	}
 	return string(raw)
 }
-

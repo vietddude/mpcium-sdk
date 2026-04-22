@@ -2,11 +2,11 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-ANDROID_BUILD_DIR="${REPO_ROOT}/dist"
+ANDROID_BUILD_DIR="${REPO_ROOT}/bindings/mobile/dist"
 OUTPUT_AAR="${ANDROID_BUILD_DIR}/mpcium-mobile.aar"
 ANDROID_MIN_API="${ANDROID_MIN_API:-21}"
 ANDROID_TARGETS="${ANDROID_TARGETS:-android/arm64,android/amd64}"
-GOMOBILEDIR="${GOMOBILEDIR:-${REPO_ROOT}/build/gomobile}"
+GOMOBILEDIR="${GOMOBILEDIR:-${REPO_ROOT}/bindings/mobile/build/gomobile}"
 
 # --- SDK / NDK auto-detection ---
 : "${ANDROID_SDK_ROOT:=${ANDROID_HOME:-${HOME}/Library/Android/sdk}}"
@@ -52,7 +52,8 @@ go_install() {
 go_install gomobile golang.org/x/mobile/cmd/gomobile@latest
 go_install gobind golang.org/x/mobile/cmd/gobind@latest
 
-go list ./mobile >/dev/null || die "Module graph error for ./mobile. Run: go mod tidy"
+cd "${REPO_ROOT}/bindings/mobile"
+go list . >/dev/null || die "Module graph error for mobile. Run: cd bindings/mobile && go mod tidy"
 
 gomobile_run() { GOMOBILEDIR="${GOMOBILEDIR}" gomobile "$@"; }
 
@@ -60,13 +61,13 @@ gomobile_run() { GOMOBILEDIR="${GOMOBILEDIR}" gomobile "$@"; }
 [[ "${SKIP_GOMOBILE_INIT:-0}" == "1" ]] || { echo "Running gomobile init..."; gomobile_run init -v; }
 
 mkdir -p "${ANDROID_BUILD_DIR}"
-cd "${REPO_ROOT}"
+cd "${REPO_ROOT}/bindings/mobile"
 
 echo "Building Android AAR..."
 gomobile_run bind \
     -target="${ANDROID_TARGETS}" \
     -androidapi="${ANDROID_MIN_API}" \
     -o "${OUTPUT_AAR}" \
-    ./mobile
+    .
 
 echo "Done: ${OUTPUT_AAR}"

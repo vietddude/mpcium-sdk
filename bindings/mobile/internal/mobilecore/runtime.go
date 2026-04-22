@@ -17,6 +17,7 @@ import (
 )
 
 const bootstrapPreparamsSlot = "bootstrap"
+const maxPendingPeerMessagesPerSession = 256
 
 type Runtime struct {
 	cfg         Config
@@ -25,9 +26,11 @@ type Runtime struct {
 	identity    *localIdentity
 	coordLookup *coordinatorLookup
 
-	sessionsMu  sync.RWMutex
-	sessions    map[string]*participant.ParticipantSession
-	sessionMeta map[string]string
+	sessionsMu   sync.RWMutex
+	sessionOpsMu sync.Mutex
+	sessions     map[string]*participant.ParticipantSession
+	sessionMeta  map[string]string
+	pendingPeer  map[string][]*protocol.PeerMessage
 
 	seqMu       sync.Mutex
 	sessionSeq  map[string]uint64
@@ -90,6 +93,7 @@ func NewRuntime(cfg Config, relay Relay, stores Stores) (*Runtime, error) {
 		coordLookup: coordLookup,
 		sessions:    map[string]*participant.ParticipantSession{},
 		sessionMeta: map[string]string{},
+		pendingPeer: map[string][]*protocol.PeerMessage{},
 		sessionSeq:  map[string]uint64{},
 		pendingSign: map[string]pendingApproval{},
 	}, nil
@@ -297,6 +301,8 @@ func (r *Runtime) handleControl(raw []byte) error {
 		return err
 	}
 	if msg.SessionStart != nil {
+		r.sessionOpsMu.Lock()
+		defer r.sessionOpsMu.Unlock()
 		if msg.SessionStart.Operation == protocol.OperationTypeSign {
 			if err := r.verifyControlSignature(&msg); err != nil {
 				return err
@@ -312,6 +318,8 @@ func (r *Runtime) handleControl(raw []byte) error {
 		}
 		return r.startSession(&msg)
 	}
+	r.sessionOpsMu.Lock()
+	defer r.sessionOpsMu.Unlock()
 	session := r.getSession(msg.SessionID)
 	if session == nil {
 		return nil
@@ -326,7 +334,13 @@ func (r *Runtime) handleControl(raw []byte) error {
 	if err != nil {
 		return err
 	}
-	return r.dispatchActions(actions)
+	if err := r.dispatchActions(actions); err != nil {
+		return err
+	}
+	if msg.MPCBegin != nil {
+		return r.flushPendingPeerMessages(msg.SessionID)
+	}
+	return nil
 }
 
 func (r *Runtime) startSession(msg *protocol.ControlMessage) error {
@@ -379,18 +393,88 @@ func (r *Runtime) handlePeer(raw []byte) error {
 	if err := json.Unmarshal(raw, &msg); err != nil {
 		return err
 	}
+	r.sessionOpsMu.Lock()
+	defer r.sessionOpsMu.Unlock()
 	session := r.getSession(msg.SessionID)
 	if session == nil {
 		return nil
 	}
 	actions, err := session.HandlePeer(&msg)
 	if err != nil {
+		if errors.Is(err, participant.ErrPartyNotRunning) && msg.MPCPacket != nil {
+			if r.enqueuePendingPeerMessage(&msg) {
+				r.events.push(newRuntimeEvent("peer_message_queued", msg.SessionID, r.getSessionOperation(msg.SessionID), "queued peer mpc message until local party starts"))
+				return nil
+			}
+		}
 		return err
 	}
 	return r.dispatchActions(actions)
 }
 
+func (r *Runtime) enqueuePendingPeerMessage(msg *protocol.PeerMessage) bool {
+	r.sessionsMu.Lock()
+	defer r.sessionsMu.Unlock()
+	if _, ok := r.sessions[msg.SessionID]; !ok {
+		return false
+	}
+	queue := r.pendingPeer[msg.SessionID]
+	if len(queue) >= maxPendingPeerMessagesPerSession {
+		r.events.push(newRuntimeEvent("runtime_error", msg.SessionID, r.sessionMeta[msg.SessionID], "dropping peer mpc message because pending queue is full"))
+		return true
+	}
+	clone := *msg
+	if msg.Signature != nil {
+		clone.Signature = append([]byte(nil), msg.Signature...)
+	}
+	if msg.MPCPacket != nil {
+		packet := *msg.MPCPacket
+		packet.Payload = append([]byte(nil), msg.MPCPacket.Payload...)
+		packet.Nonce = append([]byte(nil), msg.MPCPacket.Nonce...)
+		clone.MPCPacket = &packet
+	}
+	queue = append(queue, &clone)
+	r.pendingPeer[msg.SessionID] = queue
+	return true
+}
+
+func (r *Runtime) takePendingPeerMessages(sessionID string) []*protocol.PeerMessage {
+	r.sessionsMu.Lock()
+	defer r.sessionsMu.Unlock()
+	pending := r.pendingPeer[sessionID]
+	delete(r.pendingPeer, sessionID)
+	return pending
+}
+
+func (r *Runtime) flushPendingPeerMessages(sessionID string) error {
+	pending := r.takePendingPeerMessages(sessionID)
+	if len(pending) == 0 {
+		return nil
+	}
+	r.events.push(newRuntimeEvent("peer_messages_flushed", sessionID, r.getSessionOperation(sessionID), fmt.Sprintf("flushing %d queued peer mpc messages", len(pending))))
+	for _, msg := range pending {
+		session := r.getSession(sessionID)
+		if session == nil {
+			return nil
+		}
+		actions, err := session.HandlePeer(msg)
+		if err != nil {
+			if errors.Is(err, participant.ErrPartyNotRunning) {
+				r.enqueuePendingPeerMessage(msg)
+				return nil
+			}
+			return err
+		}
+		if err := r.dispatchActions(actions); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (r *Runtime) tickSessions() error {
+	r.sessionOpsMu.Lock()
+	defer r.sessionOpsMu.Unlock()
 	r.sessionsMu.RLock()
 	ids := make([]string, 0, len(r.sessions))
 	for sessionID := range r.sessions {
@@ -556,6 +640,7 @@ func (r *Runtime) dropSession(sessionID string) {
 	defer r.sessionsMu.Unlock()
 	delete(r.sessions, sessionID)
 	delete(r.sessionMeta, sessionID)
+	delete(r.pendingPeer, sessionID)
 }
 
 func (r *Runtime) getSessionOperation(sessionID string) string {

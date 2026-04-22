@@ -3,7 +3,7 @@ plugins {
     id 'org.jetbrains.kotlin.android'
 }
 
-def mpciumMobileAar = file("$rootDir/../../dist/mpcium-mobile.aar")
+def mpciumMobileAar = file("$rootDir/../../bindings/mobile/dist/mpcium-mobile.aar")
 
 android {
     namespace 'com.fystack.mpciummobile'

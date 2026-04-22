@@ -20,7 +20,7 @@ docker run --rm -p 1883:1883 eclipse-mosquitto:2 mosquitto -c /mosquitto-no-auth
 make mobile-android
 ```
 
-3. Ensure AAR exists at `dist/mpcium-mobile.aar`.
+3. Ensure AAR exists at `bindings/mobile/dist/mpcium-mobile.aar`.
 
 4. Build sample:
 
