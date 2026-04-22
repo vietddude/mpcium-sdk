@@ -327,7 +327,7 @@ func (r *Runtime) handleControl(raw []byte) error {
 	if msg.SessionAbort != nil {
 		r.dropSession(msg.SessionID)
 		r.events.push(newRuntimeEvent("session_failed", msg.SessionID, r.getSessionOperation(msg.SessionID), msg.SessionAbort.Detail))
-		_ = r.stores.DeleteSessionArtifacts(msg.SessionID)
+		_ = r.stores.DeleteSessionCheckpoint(msg.SessionID)
 		return nil
 	}
 	actions, err := session.HandleControl(&msg)
@@ -371,7 +371,7 @@ func (r *Runtime) startSession(msg *protocol.ControlMessage) error {
 		Coordinator:        r.coordLookup,
 		Preparams:          r.stores,
 		Shares:             r.stores,
-		SessionArtifacts:   r.stores,
+		SessionCheckpoint:  r.stores,
 	})
 	if err != nil {
 		return err

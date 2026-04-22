@@ -31,24 +31,9 @@ Current supported runtime flow:
 - `protocol`: JSON contracts, validation, signing bytes
 - `internal/wirecrypto`: direct packet key exchange/encryption helpers
 - `identity`: identity lookup/signing interfaces
-- `storage`: share/preparams/session artifact interfaces
-
-Additional modules in this repo:
-
-- `bindings/mobile`: gomobile facade with native transport/store adapters
-- `integrations/coordinator-grpc`: coordinator orchestration proto and generated gRPC client
-
-## Coordinator gRPC example
-
-The coordinator orchestration proto and generated gRPC client live in `integrations/coordinator-grpc`.
-Run the example from its own module:
-
-```sh
-cd integrations/coordinator-grpc
-go run .
-```
-
-The example submits `Keygen`, waits with `WaitSessionResult`, then submits `Sign` for the same wallet and waits for the signature. Edit the constants and participant public keys at the top of `integrations/coordinator-grpc/main.go` for your local nodes.
+- `storage`: share/preparams/session-checkpoint interfaces
+- `mobilecore`: mobile runtime core with native transport/store adapters
+- `mobile`: gomobile facade (JSON-first API)
 
 ## Minimal integration example
 
@@ -69,7 +54,7 @@ import (
 // - identity.LocalIdentity
 // - identity.PeerLookup
 // - identity.CoordinatorLookup
-// - storage.PreparamsStore / ShareStore / SessionArtifactsStore
+// - storage.PreparamsStore / ShareStore / SessionCheckpointStore
 
 func runSession(
 	start *protocol.SessionStart,
@@ -173,7 +158,7 @@ ECDSA keygen now requires a slot-based preparams store. The legacy single-cache 
   - `SaveActivePreparamsSlot(protocol, slot)`
 - Runtime behavior:
   - Session resolves preparams with `pinned_slot -> active_slot` and fails fast on missing/invalid blobs.
-  - Each session pins one slot in local `SessionArtifacts`, so in-flight sessions are deterministic across global rotates.
+  - Each session pins one slot in its local `SessionCheckpoint`, so in-flight sessions are deterministic across global rotates.
   - Successful ECDSA keygen writes new preparams to slot `next`, then rotates active pointer atomically and snapshots previous active into slot `prev`.
 - Integrator requirements:
   - Seed at least one valid slot and set `active_slot` before running ECDSA keygen.

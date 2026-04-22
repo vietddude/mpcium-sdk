@@ -2,7 +2,6 @@ package wirecrypto
 
 import (
 	"crypto/ecdh"
-	"crypto/ed25519"
 	"crypto/hkdf"
 	"crypto/rand"
 	"crypto/sha256"
@@ -19,10 +18,7 @@ const (
 	nonceSize     = chacha20poly1305.NonceSize
 )
 
-var (
-	ErrInvalidPublicKey = errors.New("wirecrypto: invalid x25519 public key")
-	ErrInvalidSignature = errors.New("wirecrypto: invalid ed25519 signature")
-)
+var ErrInvalidPublicKey = errors.New("wirecrypto: invalid x25519 public key")
 
 type KeyPair struct {
 	private *ecdh.PrivateKey
@@ -34,18 +30,6 @@ func GenerateKeyPair() (*KeyPair, error) {
 		return nil, err
 	}
 	return &KeyPair{private: privateKey}, nil
-}
-
-func RestoreKeyPair(privateKey []byte) (*KeyPair, error) {
-	key, err := ecdh.X25519().NewPrivateKey(privateKey)
-	if err != nil {
-		return nil, err
-	}
-	return &KeyPair{private: key}, nil
-}
-
-func (k *KeyPair) PrivateKeyBytes() []byte {
-	return append([]byte(nil), k.private.Bytes()...)
 }
 
 func (k *KeyPair) PublicKeyBytes() []byte {
@@ -65,13 +49,6 @@ func BuildAAD(msg *protocol.PeerMessage) ([]byte, error) {
 		cloned.MPCPacket = &packet
 	}
 	return protocol.MarshalJSON(&cloned)
-}
-
-func Verify(publicKey ed25519.PublicKey, message, signature []byte) error {
-	if !ed25519.Verify(publicKey, message, signature) {
-		return ErrInvalidSignature
-	}
-	return nil
 }
 
 func EncryptDirect(local *KeyPair, peerPublic []byte, message *protocol.PeerMessage, plaintext []byte) ([]byte, []byte, error) {

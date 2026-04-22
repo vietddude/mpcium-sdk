@@ -30,9 +30,9 @@ type Stores interface {
 	LoadShare(protocolType protocol.ProtocolType, keyID string) ([]byte, error)
 	SaveShare(protocolType protocol.ProtocolType, keyID string, share []byte) error
 
-	LoadSessionArtifacts(sessionID string) ([]byte, error)
-	SaveSessionArtifacts(sessionID string, artifact []byte) error
-	DeleteSessionArtifacts(sessionID string) error
+	LoadSessionCheckpoint(sessionID string) ([]byte, error)
+	SaveSessionCheckpoint(sessionID string, checkpoint []byte) error
+	DeleteSessionCheckpoint(sessionID string) error
 
 	LoadIdentityPrivateKey() ([]byte, error)
 	SaveIdentityPrivateKey(privateKey []byte) error
@@ -88,16 +88,16 @@ func (s *adapterStores) SaveShare(protocolType protocol.ProtocolType, keyID stri
 	return s.save(keyShare(protocolType, keyID), share)
 }
 
-func (s *adapterStores) LoadSessionArtifacts(sessionID string) ([]byte, error) {
-	return s.load(keyArtifact(sessionID))
+func (s *adapterStores) LoadSessionCheckpoint(sessionID string) ([]byte, error) {
+	return s.load(keyCheckpoint(sessionID))
 }
 
-func (s *adapterStores) SaveSessionArtifacts(sessionID string, artifact []byte) error {
-	return s.save(keyArtifact(sessionID), artifact)
+func (s *adapterStores) SaveSessionCheckpoint(sessionID string, checkpoint []byte) error {
+	return s.save(keyCheckpoint(sessionID), checkpoint)
 }
 
-func (s *adapterStores) DeleteSessionArtifacts(sessionID string) error {
-	return s.adapter.Delete(keyArtifact(sessionID))
+func (s *adapterStores) DeleteSessionCheckpoint(sessionID string) error {
+	return s.adapter.Delete(keyCheckpoint(sessionID))
 }
 
 func (s *adapterStores) LoadIdentityPrivateKey() ([]byte, error) {
@@ -183,8 +183,8 @@ func keyShare(protocolType protocol.ProtocolType, keyID string) string {
 	return fmt.Sprintf("shares:%s:%s", protocolType, keyID)
 }
 
-func keyArtifact(sessionID string) string {
-	return "artifacts:" + sessionID
+func keyCheckpoint(sessionID string) string {
+	return "checkpoints:" + sessionID
 }
 
 func keyPendingApproval(sessionID string) string {

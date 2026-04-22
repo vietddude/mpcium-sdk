@@ -225,7 +225,7 @@ type memoryStores struct {
 	values       map[string][]byte
 	activeSlots  map[string]string
 	shares       map[string][]byte
-	artifacts    map[string][]byte
+	checkpoints  map[string][]byte
 	identityPriv []byte
 	pending      map[string][]byte
 }
@@ -235,7 +235,7 @@ func newMemoryStores() *memoryStores {
 		values:      map[string][]byte{},
 		activeSlots: map[string]string{},
 		shares:      map[string][]byte{},
-		artifacts:   map[string][]byte{},
+		checkpoints: map[string][]byte{},
 		pending:     map[string][]byte{},
 	}
 }
@@ -261,15 +261,15 @@ func (m *memoryStores) SaveShare(protocolType protocol.ProtocolType, keyID strin
 	m.shares[m.shareKey(protocolType, keyID)] = append([]byte(nil), share...)
 	return nil
 }
-func (m *memoryStores) LoadSessionArtifacts(sessionID string) ([]byte, error) {
-	return append([]byte(nil), m.artifacts[sessionID]...), nil
+func (m *memoryStores) LoadSessionCheckpoint(sessionID string) ([]byte, error) {
+	return append([]byte(nil), m.checkpoints[sessionID]...), nil
 }
-func (m *memoryStores) SaveSessionArtifacts(sessionID string, artifact []byte) error {
-	m.artifacts[sessionID] = append([]byte(nil), artifact...)
+func (m *memoryStores) SaveSessionCheckpoint(sessionID string, checkpoint []byte) error {
+	m.checkpoints[sessionID] = append([]byte(nil), checkpoint...)
 	return nil
 }
-func (m *memoryStores) DeleteSessionArtifacts(sessionID string) error {
-	delete(m.artifacts, sessionID)
+func (m *memoryStores) DeleteSessionCheckpoint(sessionID string) error {
+	delete(m.checkpoints, sessionID)
 	return nil
 }
 func (m *memoryStores) LoadIdentityPrivateKey() ([]byte, error) {

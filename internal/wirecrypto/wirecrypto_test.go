@@ -1,24 +1,10 @@
 package wirecrypto
 
 import (
-	"crypto/ed25519"
-	"crypto/rand"
 	"testing"
 
 	"github.com/fystack/mpcium-sdk/protocol"
 )
-
-func TestVerifyRejectsBadSignature(t *testing.T) {
-	t.Parallel()
-
-	pub, _, err := ed25519.GenerateKey(rand.Reader)
-	if err != nil {
-		t.Fatalf("GenerateKey() error = %v", err)
-	}
-	if err := Verify(pub, []byte("payload"), []byte("bad-signature")); err != ErrInvalidSignature {
-		t.Fatalf("Verify() error = %v, want %v", err, ErrInvalidSignature)
-	}
-}
 
 func TestDirectEncryptionRoundTrip(t *testing.T) {
 	t.Parallel()

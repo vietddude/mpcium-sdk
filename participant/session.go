@@ -43,63 +43,164 @@ const (
 	PreparamsSlotPrev = "prev"
 )
 
+// Config is the construction-time input for a ParticipantSession. It bundles
+// the session manifest, the local party's identity, the lookups used to verify
+// counterparties, and the storage backends needed to load/persist key material
+// and resumable session state.
 type Config struct {
-	Start              *protocol.SessionStart
+	// Start is the validated session manifest: operation type, protocol,
+	// threshold, canonical participant list, and the keygen or sign payload.
+	Start *protocol.SessionStart
+	// LocalParticipantID selects which entry in Start.Participants this
+	// process plays; must match Identity.ParticipantID().
 	LocalParticipantID string
-	Identity           identity.LocalIdentity
-	Peers              identity.PeerLookup
-	Coordinator        identity.CoordinatorLookup
-	Preparams          storage.PreparamsStore
-	Shares             storage.ShareStore
-	SessionArtifacts   storage.SessionArtifactsStore
+	// Identity is the local Ed25519 signer used to sign outbound peer
+	// messages and session events.
+	Identity identity.LocalIdentity
+	// Peers resolves a participant ID to its Ed25519 public key for
+	// verifying inbound peer-to-peer messages.
+	Peers identity.PeerLookup
+	// Coordinator resolves a coordinator ID to its Ed25519 public key for
+	// verifying inbound control messages (SessionStart, KeyExchange, MPCBegin).
+	Coordinator identity.CoordinatorLookup
+	// Preparams stores Paillier preparams used by ECDSA keygen. Required
+	// for ECDSA keygen; unused for EdDSA and for signing.
+	Preparams storage.PreparamsStore
+	// Shares loads existing key shares for signing and persists newly
+	// generated shares produced by keygen.
+	Shares storage.ShareStore
+	// SessionCheckpoint optionally persists the per-session resume checkpoint
+	// (status, sequence counters, key-exchange progress) so a session can
+	// recover across restarts. Nil disables persistence.
+	SessionCheckpoint storage.SessionCheckpointStore
 }
 
+// Result is the terminal output of a session: either a freshly generated
+// key share (keygen) or a signature (sign). Aliased from the protocol package
+// so callers of this package do not need to import it directly.
 type Result = protocol.Result
 
+// CleanupHint is emitted alongside terminal Actions to tell the caller what
+// to do with session-scoped state once the session has completed or failed.
 type CleanupHint struct {
-	SessionID      string
-	DropArtifacts  bool
+	// SessionID identifies the session the hint applies to.
+	SessionID string
+	// DropCheckpoint signals that the persisted resume checkpoint for this
+	// session is no longer needed and can be deleted.
+	DropCheckpoint bool
+	// PersistOutcome signals that the terminal Result should be recorded
+	// by the caller (e.g. to durable storage) before cleanup.
 	PersistOutcome bool
 }
 
+// Actions is the set of side effects produced by a single call into the
+// session (Start, HandleControl, HandlePeer, Tick). The caller is responsible
+// for delivering PeerMessages and SessionEvents over the wire; Result and
+// Cleanup are populated only on terminal transitions.
 type Actions struct {
-	PeerMessages  []*protocol.PeerMessage
+	// PeerMessages are outbound direct messages the caller must forward
+	// to the named participants.
+	PeerMessages []*protocol.PeerMessage
+	// SessionEvents are outbound broadcast events (joined, ready,
+	// key-exchange done, completed, failed) the caller must publish.
 	SessionEvents []*protocol.SessionEvent
-	Result        *Result
-	Cleanup       *CleanupHint
+	// Result is the terminal output of the session. Non-nil only on the
+	// transition into ParticipantPhaseCompleted.
+	Result *Result
+	// Cleanup is the caller's cue to tear down session-scoped state.
+	// Non-nil on terminal transitions (completed or failed).
+	Cleanup *CleanupHint
 }
 
+// Status is a snapshot of the local participant's position in the session
+// lifecycle. It is both the return value of ParticipantSession.Status and the
+// portion of session state persisted to SessionCheckpointStore for resume.
 type Status struct {
-	SessionID      string
-	ParticipantID  string
-	Phase          protocol.ParticipantPhase
-	WaitingFor     []string
-	FailureReason  protocol.FailureReason
+	// SessionID identifies the session this status belongs to.
+	SessionID string
+	// ParticipantID is the local participant this status describes.
+	ParticipantID string
+	// Phase is the current lifecycle phase of the local participant.
+	Phase protocol.ParticipantPhase
+	// WaitingFor lists participant IDs whose next round message is
+	// required before the local TSS party can advance. Populated from the
+	// live tss.Party while it is running.
+	WaitingFor []string
+	// FailureReason is set when Phase is ParticipantPhaseFailed and
+	// categorizes the cause (e.g. decrypt failed, TSS error).
+	FailureReason protocol.FailureReason
+	// FailureDetails is a free-form message accompanying FailureReason.
 	FailureDetails string
 }
 
+// ParticipantSession drives the local participant's half of a single MPC
+// session. It is a synchronous state machine: callers feed it control
+// messages, peer messages, and ticks, and receive Actions to dispatch. It
+// owns the underlying tss.Party, the wire-level key exchange, and any
+// resumable state persisted via SessionCheckpointStore.
+//
+// ParticipantSession is not safe for concurrent use; serialize calls from a
+// single goroutine or guard with an external lock.
 type ParticipantSession struct {
-	cfg    Config
+	// cfg is the immutable construction-time configuration.
+	cfg Config
+	// status is the current lifecycle snapshot; persisted on every
+	// mutating call when SessionCheckpointStore is configured.
 	status Status
 
+	// sortedParticipants is the canonical participant ordering derived
+	// from cfg.Start.Participants. Used for deterministic iteration.
 	sortedParticipants []*protocol.SessionParticipant
-	partyByID          map[string]*tss.PartyID
+	// partyByID maps ParticipantID to the tss.PartyID constructed for
+	// that participant. Values are stable for the lifetime of the session.
+	partyByID map[string]*tss.PartyID
 
-	party            tss.Party
-	outCh            chan tss.Message
+	// party is the underlying TSS state machine. Nil until MPCBegin is
+	// accepted; non-nil and Running() for the duration of the MPC rounds.
+	party tss.Party
+	// outCh is drained by collectRuntimeActions to convert tss.Message
+	// into signed, encrypted protocol.PeerMessage.
+	outCh chan tss.Message
+	// ecdsaKeygenEndCh receives the ECDSA keygen save data on success.
+	// Non-nil only during ECDSA keygen.
 	ecdsaKeygenEndCh chan *ecdsaKeygen.LocalPartySaveData
+	// eddsaKeygenEndCh receives the EdDSA keygen save data on success.
+	// Non-nil only during EdDSA keygen.
 	eddsaKeygenEndCh chan *eddsaKeygen.LocalPartySaveData
-	ecdsaSignEndCh   chan *commonSig.SignatureData
-	eddsaSignEndCh   chan *commonSig.SignatureData
+	// ecdsaSignEndCh receives the ECDSA signature on success. Non-nil
+	// only during ECDSA signing.
+	ecdsaSignEndCh chan *commonSig.SignatureData
+	// eddsaSignEndCh receives the EdDSA signature on success. Non-nil
+	// only during EdDSA signing.
+	eddsaSignEndCh chan *commonSig.SignatureData
 
-	sequence       uint64
+	// sequence is the monotonically increasing counter stamped on every
+	// outbound PeerMessage and SessionEvent produced by this participant.
+	sequence uint64
+	// controlSeqSeen is the highest accepted inbound control message
+	// sequence; enforces strict monotonicity to reject replays.
 	controlSeqSeen uint64
 
+	// activeExchangeID is the coordinator-assigned ID for the current
+	// X25519 key exchange round. Empty before the first KeyExchange
+	// control message and after a terminal transition.
 	activeExchangeID string
-	keyExchangeDone  bool
-	kxLocalKey       *wirecrypto.KeyPair
-	peerX25519Pub    map[string][]byte
-	preparamsSlot    string
+	// keyExchangeDone is true once hellos have been received from all
+	// other participants for activeExchangeID.
+	keyExchangeDone bool
+	// kxLocalKey is the local participant's X25519 key pair for the
+	// active exchange. Regenerated per exchange and cleared on reset.
+	// Not persisted: on resume from a checkpoint, a fresh exchange is
+	// required before MPC can continue.
+	kxLocalKey *wirecrypto.KeyPair
+	// peerX25519Pub maps each remote participant ID to the X25519 public
+	// key it advertised in its hello for the active exchange.
+	peerX25519Pub map[string][]byte
+	// preparamsSlot names which Paillier preparams slot (PreparamsSlotNext
+	// or PreparamsSlotPrev) this session pinned at start. Persisted so a
+	// resumed session reads the same preparams even after rotation.
+	// ECDSA keygen only.
+	preparamsSlot string
 }
 
 func New(cfg Config) (*ParticipantSession, error) {
@@ -146,7 +247,7 @@ func New(cfg Config) (*ParticipantSession, error) {
 		partyByID:          partyByID,
 		peerX25519Pub:      make(map[string][]byte, len(sorted)),
 	}
-	if err := session.loadArtifacts(); err != nil {
+	if err := session.loadCheckpoint(); err != nil {
 		return nil, err
 	}
 	return session, nil
@@ -170,7 +271,7 @@ func (s *ParticipantSession) Start() (Actions, error) {
 		return Actions{}, err
 	}
 
-	if err := s.saveArtifacts(); err != nil {
+	if err := s.saveCheckpoint(); err != nil {
 		return Actions{}, err
 	}
 	return Actions{SessionEvents: []*protocol.SessionEvent{joined, ready}}, nil
@@ -202,7 +303,7 @@ func (s *ParticipantSession) HandleControl(msg *protocol.ControlMessage) (Action
 		if err != nil {
 			return s.fail(protocol.FailureReasonTSSError, err.Error()), err
 		}
-		if err := s.saveArtifacts(); err != nil {
+		if err := s.saveCheckpoint(); err != nil {
 			return Actions{}, err
 		}
 		return actions, nil
@@ -218,7 +319,7 @@ func (s *ParticipantSession) HandleControl(msg *protocol.ControlMessage) (Action
 		if err != nil {
 			return s.fail(protocol.FailureReasonTSSError, err.Error()), err
 		}
-		if err := s.saveArtifacts(); err != nil {
+		if err := s.saveCheckpoint(); err != nil {
 			return Actions{}, err
 		}
 		return actions, nil
@@ -248,7 +349,7 @@ func (s *ParticipantSession) HandlePeer(msg *protocol.PeerMessage) (Actions, err
 		if err != nil {
 			return Actions{}, err
 		}
-		if err := s.saveArtifacts(); err != nil {
+		if err := s.saveCheckpoint(); err != nil {
 			return Actions{}, err
 		}
 		return actions, nil
@@ -278,7 +379,7 @@ func (s *ParticipantSession) HandlePeer(msg *protocol.PeerMessage) (Actions, err
 	if err != nil {
 		return s.fail(protocol.FailureReasonTSSError, err.Error()), err
 	}
-	if err := s.saveArtifacts(); err != nil {
+	if err := s.saveCheckpoint(); err != nil {
 		return Actions{}, err
 	}
 	return actions, nil
@@ -292,7 +393,7 @@ func (s *ParticipantSession) Tick(_ time.Time) (Actions, error) {
 	if err != nil {
 		return s.fail(protocol.FailureReasonTSSError, err.Error()), err
 	}
-	if err := s.saveArtifacts(); err != nil {
+	if err := s.saveCheckpoint(); err != nil {
 		return Actions{}, err
 	}
 	return actions, nil
@@ -537,7 +638,7 @@ func (s *ParticipantSession) resolveECDSAPreparams() (*ecdsaKeygen.LocalPreParam
 		}
 		slot = activeSlot
 		s.preparamsSlot = activeSlot
-		if err := s.saveArtifacts(); err != nil {
+		if err := s.saveCheckpoint(); err != nil {
 			return nil, err
 		}
 	}
@@ -700,11 +801,11 @@ func (s *ParticipantSession) complete(result *Result) Actions {
 	if err := s.signSessionEvent(event); err != nil {
 		return s.fail(protocol.FailureReasonTSSError, err.Error())
 	}
-	_ = s.dropArtifacts()
+	_ = s.dropCheckpoint()
 	return Actions{
 		Result:        result,
 		SessionEvents: []*protocol.SessionEvent{event},
-		Cleanup:       &CleanupHint{SessionID: s.cfg.Start.SessionID, DropArtifacts: true, PersistOutcome: true},
+		Cleanup:       &CleanupHint{SessionID: s.cfg.Start.SessionID, DropCheckpoint: true, PersistOutcome: true},
 	}
 }
 
@@ -716,10 +817,10 @@ func (s *ParticipantSession) fail(reason protocol.FailureReason, details string)
 	event := s.newEvent()
 	event.SessionFailed = &protocol.SessionFailed{Reason: reason, Detail: details}
 	_ = s.signSessionEvent(event)
-	_ = s.dropArtifacts()
+	_ = s.dropCheckpoint()
 	return Actions{
 		SessionEvents: []*protocol.SessionEvent{event},
-		Cleanup:       &CleanupHint{SessionID: s.cfg.Start.SessionID, DropArtifacts: true},
+		Cleanup:       &CleanupHint{SessionID: s.cfg.Start.SessionID, DropCheckpoint: true},
 	}
 }
 
@@ -791,11 +892,11 @@ func (s *ParticipantSession) makePeerMessages(message tss.Message) ([]*protocol.
 	return messages, nil
 }
 
-func (s *ParticipantSession) saveArtifacts() error {
-	if s.cfg.SessionArtifacts == nil {
+func (s *ParticipantSession) saveCheckpoint() error {
+	if s.cfg.SessionCheckpoint == nil {
 		return nil
 	}
-	blob, err := encodeStatusArtifact(
+	blob, err := encodeStatusCheckpoint(
 		s.status,
 		s.controlSeqSeen,
 		s.sequence,
@@ -807,18 +908,18 @@ func (s *ParticipantSession) saveArtifacts() error {
 	if err != nil {
 		return err
 	}
-	return s.cfg.SessionArtifacts.SaveSessionArtifacts(s.cfg.Start.SessionID, blob)
+	return s.cfg.SessionCheckpoint.SaveSessionCheckpoint(s.cfg.Start.SessionID, blob)
 }
 
-func (s *ParticipantSession) loadArtifacts() error {
-	if s.cfg.SessionArtifacts == nil {
+func (s *ParticipantSession) loadCheckpoint() error {
+	if s.cfg.SessionCheckpoint == nil {
 		return nil
 	}
-	blob, err := s.cfg.SessionArtifacts.LoadSessionArtifacts(s.cfg.Start.SessionID)
+	blob, err := s.cfg.SessionCheckpoint.LoadSessionCheckpoint(s.cfg.Start.SessionID)
 	if err != nil || len(blob) == 0 {
 		return nil
 	}
-	status, controlSeq, sequence, activeExchangeID, keyExchangeDone, peerX25519, preparamsSlot, err := decodeStatusArtifact(blob)
+	status, controlSeq, sequence, activeExchangeID, keyExchangeDone, peerX25519, preparamsSlot, err := decodeStatusCheckpoint(blob)
 	if err != nil {
 		return err
 	}
@@ -838,14 +939,14 @@ func (s *ParticipantSession) loadArtifacts() error {
 	return nil
 }
 
-func (s *ParticipantSession) dropArtifacts() error {
-	if s.cfg.SessionArtifacts == nil {
+func (s *ParticipantSession) dropCheckpoint() error {
+	if s.cfg.SessionCheckpoint == nil {
 		return nil
 	}
-	return s.cfg.SessionArtifacts.DeleteSessionArtifacts(s.cfg.Start.SessionID)
+	return s.cfg.SessionCheckpoint.DeleteSessionCheckpoint(s.cfg.Start.SessionID)
 }
 
-type statusArtifact struct {
+type statusCheckpoint struct {
 	Version          int
 	Status           Status
 	ControlSeq       uint64
@@ -856,7 +957,7 @@ type statusArtifact struct {
 	PreparamsSlot    string
 }
 
-func encodeStatusArtifact(
+func encodeStatusCheckpoint(
 	status Status,
 	controlSeq, sequence uint64,
 	activeExchangeID string,
@@ -865,7 +966,7 @@ func encodeStatusArtifact(
 	preparamsSlot string,
 ) ([]byte, error) {
 	var buffer bytes.Buffer
-	artifact := statusArtifact{
+	checkpoint := statusCheckpoint{
 		Version:          2,
 		Status:           status,
 		ControlSeq:       controlSeq,
@@ -875,18 +976,18 @@ func encodeStatusArtifact(
 		PeerX25519Pub:    clonePeerKeyMap(peerX25519),
 		PreparamsSlot:    preparamsSlot,
 	}
-	if err := gob.NewEncoder(&buffer).Encode(&artifact); err != nil {
+	if err := gob.NewEncoder(&buffer).Encode(&checkpoint); err != nil {
 		return nil, err
 	}
 	return buffer.Bytes(), nil
 }
 
-func decodeStatusArtifact(blob []byte) (Status, uint64, uint64, string, bool, map[string][]byte, string, error) {
-	artifact := statusArtifact{}
-	if err := gob.NewDecoder(bytes.NewReader(blob)).Decode(&artifact); err != nil {
+func decodeStatusCheckpoint(blob []byte) (Status, uint64, uint64, string, bool, map[string][]byte, string, error) {
+	checkpoint := statusCheckpoint{}
+	if err := gob.NewDecoder(bytes.NewReader(blob)).Decode(&checkpoint); err != nil {
 		return Status{}, 0, 0, "", false, nil, "", err
 	}
-	return artifact.Status, artifact.ControlSeq, artifact.Sequence, artifact.ActiveExchangeID, artifact.KeyExchangeDone, clonePeerKeyMap(artifact.PeerX25519Pub), artifact.PreparamsSlot, nil
+	return checkpoint.Status, checkpoint.ControlSeq, checkpoint.Sequence, checkpoint.ActiveExchangeID, checkpoint.KeyExchangeDone, clonePeerKeyMap(checkpoint.PeerX25519Pub), checkpoint.PreparamsSlot, nil
 }
 
 func encodeECDSAKeygenShare(data *ecdsaKeygen.LocalPartySaveData) ([]byte, error) {
