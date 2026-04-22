@@ -159,11 +159,11 @@ func TestSessionRejectsMPCBeginBeforeKeyExchange(t *testing.T) {
 }
 
 type participantFixture struct {
-	id        *testIdentity
-	lookup    *testPeerLookup
-	preparams *memoryPreparamsStore
-	shares    *memoryShareStore
-	artifacts *memorySessionArtifactsStore
+	id          *testIdentity
+	lookup      *testPeerLookup
+	preparams   *memoryPreparamsStore
+	shares      *memoryShareStore
+	checkpoints *memorySessionCheckpointStore
 }
 
 type coordinatorFixture struct {
@@ -188,11 +188,11 @@ func newTestParticipants(count int) ([]participantFixture, coordinatorFixture, e
 		identity := &testIdentity{id: fmt.Sprintf("peer-%d", i+1), pub: pub, priv: priv}
 		peerLookup.keys[identity.id] = pub
 		fixtures = append(fixtures, participantFixture{
-			id:        identity,
-			lookup:    peerLookup,
-			preparams: &memoryPreparamsStore{values: map[string][]byte{}, activeSlots: map[string]string{}},
-			shares:    &memoryShareStore{values: map[string][]byte{}},
-			artifacts: &memorySessionArtifactsStore{values: map[string][]byte{}},
+			id:          identity,
+			lookup:      peerLookup,
+			preparams:   &memoryPreparamsStore{values: map[string][]byte{}, activeSlots: map[string]string{}},
+			shares:      &memoryShareStore{values: map[string][]byte{}},
+			checkpoints: &memorySessionCheckpointStore{values: map[string][]byte{}},
 		})
 	}
 	coordinatorPub, coordinatorPriv, err := ed25519.GenerateKey(rand.Reader)
@@ -215,7 +215,7 @@ func createSessions(t *testing.T, start *protocol.SessionStart, fixtures []parti
 			Coordinator:        coordinator.lookup,
 			Preparams:          fixture.preparams,
 			Shares:             fixture.shares,
-			SessionArtifacts:   fixture.artifacts,
+			SessionCheckpoint:  fixture.checkpoints,
 		})
 		if err != nil {
 			t.Fatalf("participant.New() error = %v", err)
@@ -430,18 +430,18 @@ func (s *memoryShareStore) SaveShare(protocolType protocol.ProtocolType, keyID s
 	return nil
 }
 
-type memorySessionArtifactsStore struct{ values map[string][]byte }
+type memorySessionCheckpointStore struct{ values map[string][]byte }
 
-func (s *memorySessionArtifactsStore) LoadSessionArtifacts(sessionID string) ([]byte, error) {
+func (s *memorySessionCheckpointStore) LoadSessionCheckpoint(sessionID string) ([]byte, error) {
 	return append([]byte(nil), s.values[sessionID]...), nil
 }
 
-func (s *memorySessionArtifactsStore) SaveSessionArtifacts(sessionID string, artifact []byte) error {
-	s.values[sessionID] = append([]byte(nil), artifact...)
+func (s *memorySessionCheckpointStore) SaveSessionCheckpoint(sessionID string, checkpoint []byte) error {
+	s.values[sessionID] = append([]byte(nil), checkpoint...)
 	return nil
 }
 
-func (s *memorySessionArtifactsStore) DeleteSessionArtifacts(sessionID string) error {
+func (s *memorySessionCheckpointStore) DeleteSessionCheckpoint(sessionID string) error {
 	delete(s.values, sessionID)
 	return nil
 }

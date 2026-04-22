@@ -14,8 +14,13 @@ type ShareStore interface {
 	SaveShare(protocol protocol.ProtocolType, keyID string, share []byte) error
 }
 
-type SessionArtifactsStore interface {
-	LoadSessionArtifacts(sessionID string) ([]byte, error)
-	SaveSessionArtifacts(sessionID string, artifact []byte) error
-	DeleteSessionArtifacts(sessionID string) error
+// SessionCheckpointStore persists the per-session resume checkpoint — a
+// Status snapshot plus the sequence counters and key-exchange progress — so
+// an in-flight MPC session can resume across process restarts instead of
+// being dropped. The blob is opaque to this layer; the participant package
+// owns the encoding.
+type SessionCheckpointStore interface {
+	LoadSessionCheckpoint(sessionID string) ([]byte, error)
+	SaveSessionCheckpoint(sessionID string, checkpoint []byte) error
+	DeleteSessionCheckpoint(sessionID string) error
 }
