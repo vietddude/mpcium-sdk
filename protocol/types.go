@@ -1,6 +1,9 @@
 package protocol
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"strings"
+)
 
 // ProtocolType selects the threshold signature scheme to run.
 type ProtocolType string
@@ -10,6 +13,27 @@ const (
 	ProtocolTypeECDSA       ProtocolType = "ECDSA"
 	ProtocolTypeEdDSA       ProtocolType = "EdDSA"
 )
+
+func NormalizeProtocol(protocol ProtocolType) ProtocolType {
+	value := strings.TrimSpace(string(protocol))
+	if value == "" {
+		return ProtocolTypeUnspecified
+	}
+	return ProtocolType(value)
+}
+
+func IsProtocolUnspecified(protocol ProtocolType) bool {
+	return NormalizeProtocol(protocol) == ProtocolTypeUnspecified
+}
+
+func IsConcreteProtocol(protocol ProtocolType) bool {
+	switch NormalizeProtocol(protocol) {
+	case ProtocolTypeECDSA, ProtocolTypeEdDSA:
+		return true
+	default:
+		return false
+	}
+}
 
 // OperationType identifies what a session is doing (keygen, signing, or reshare).
 type OperationType string

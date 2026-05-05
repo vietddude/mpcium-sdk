@@ -90,6 +90,135 @@ func TestValidateSessionStart(t *testing.T) {
 	}
 }
 
+func TestProtocolHelpers(t *testing.T) {
+	tests := []struct {
+		name        string
+		in          ProtocolType
+		normalized  ProtocolType
+		unspecified bool
+		concrete    bool
+	}{
+		{name: "empty", in: "", normalized: ProtocolTypeUnspecified, unspecified: true},
+		{name: "whitespace", in: "   ", normalized: ProtocolTypeUnspecified, unspecified: true},
+		{name: "unspecified", in: ProtocolTypeUnspecified, normalized: ProtocolTypeUnspecified, unspecified: true},
+		{name: "ecdsa", in: ProtocolTypeECDSA, normalized: ProtocolTypeECDSA, concrete: true},
+		{name: "eddsa", in: ProtocolTypeEdDSA, normalized: ProtocolTypeEdDSA, concrete: true},
+		{name: "both", in: ProtocolType("both"), normalized: ProtocolType("both")},
+		{name: "trimmed both", in: ProtocolType(" both "), normalized: ProtocolType("both")},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := NormalizeProtocol(tt.in); got != tt.normalized {
+				t.Fatalf("NormalizeProtocol() = %q, want %q", got, tt.normalized)
+			}
+			if got := IsProtocolUnspecified(tt.in); got != tt.unspecified {
+				t.Fatalf("IsProtocolUnspecified() = %v, want %v", got, tt.unspecified)
+			}
+			if got := IsConcreteProtocol(tt.in); got != tt.concrete {
+				t.Fatalf("IsConcreteProtocol() = %v, want %v", got, tt.concrete)
+			}
+		})
+	}
+}
+
+func TestCloneSessionStartDeepCopiesWireFields(t *testing.T) {
+	start := &SessionStart{
+		SessionID: "sess-1",
+		Protocol:  ProtocolTypeECDSA,
+		Operation: OperationTypeSign,
+		Threshold: 1,
+		Participants: []*SessionParticipant{
+			{ParticipantID: "p1", PartyKey: []byte("party-1"), IdentityPublicKey: []byte("identity-1")},
+			{ParticipantID: "p2", PartyKey: []byte("party-2"), IdentityPublicKey: []byte("identity-2")},
+		},
+		Sign: &SignPayload{
+			KeyID:        "wallet-1",
+			SigningInput: []byte("message"),
+			Derivation: &NonHardenedDerivation{
+				Path:  []uint32{1, 2},
+				Delta: []byte("delta"),
+			},
+		},
+	}
+
+	cloned := CloneSessionStart(start)
+	if cloned == nil {
+		t.Fatalf("CloneSessionStart() returned nil")
+	}
+
+	start.Participants[0].PartyKey[0] = 'X'
+	start.Participants[0].IdentityPublicKey[0] = 'Y'
+	start.Sign.SigningInput[0] = 'Z'
+	start.Sign.Derivation.Path[0] = 99
+	start.Sign.Derivation.Delta[0] = 'Q'
+
+	if string(cloned.Participants[0].PartyKey) != "party-1" {
+		t.Fatalf("party key was not deep copied: %q", string(cloned.Participants[0].PartyKey))
+	}
+	if string(cloned.Participants[0].IdentityPublicKey) != "identity-1" {
+		t.Fatalf("identity key was not deep copied: %q", string(cloned.Participants[0].IdentityPublicKey))
+	}
+	if string(cloned.Sign.SigningInput) != "message" {
+		t.Fatalf("signing input was not deep copied: %q", string(cloned.Sign.SigningInput))
+	}
+	if cloned.Sign.Derivation.Path[0] != 1 {
+		t.Fatalf("derivation path was not deep copied: %+v", cloned.Sign.Derivation.Path)
+	}
+	if string(cloned.Sign.Derivation.Delta) != "delta" {
+		t.Fatalf("derivation delta was not deep copied: %q", string(cloned.Sign.Derivation.Delta))
+	}
+}
+
+func TestCloneProtocolResultDeepCopiesWireFields(t *testing.T) {
+	keyShare := &Result{KeyShare: &KeyShareResult{
+		KeyID:     "wallet-1",
+		ShareBlob: []byte("share"),
+		PublicKey: []byte("public"),
+	}}
+	clonedKeyShare := CloneProtocolResult(keyShare)
+	keyShare.KeyShare.ShareBlob[0] = 'X'
+	keyShare.KeyShare.PublicKey[0] = 'Y'
+	if string(clonedKeyShare.KeyShare.ShareBlob) != "share" {
+		t.Fatalf("share blob was not deep copied: %q", string(clonedKeyShare.KeyShare.ShareBlob))
+	}
+	if string(clonedKeyShare.KeyShare.PublicKey) != "public" {
+		t.Fatalf("public key was not deep copied: %q", string(clonedKeyShare.KeyShare.PublicKey))
+	}
+
+	signature := &Result{Signature: &SignatureResult{
+		KeyID:             "wallet-1",
+		Signature:         []byte("signature"),
+		SignatureRecovery: []byte("recovery"),
+		R:                 []byte("r"),
+		S:                 []byte("s"),
+		SignedInput:       []byte("input"),
+		PublicKey:         []byte("pub"),
+	}}
+	clonedSignature := CloneProtocolResult(signature)
+	signature.Signature.Signature[0] = 'X'
+	signature.Signature.SignatureRecovery[0] = 'Y'
+	signature.Signature.R[0] = 'Z'
+	signature.Signature.S[0] = 'Q'
+	signature.Signature.SignedInput[0] = 'W'
+	signature.Signature.PublicKey[0] = 'V'
+	if string(clonedSignature.Signature.Signature) != "signature" {
+		t.Fatalf("signature was not deep copied: %q", string(clonedSignature.Signature.Signature))
+	}
+	if string(clonedSignature.Signature.SignatureRecovery) != "recovery" {
+		t.Fatalf("signature recovery was not deep copied: %q", string(clonedSignature.Signature.SignatureRecovery))
+	}
+	if string(clonedSignature.Signature.R) != "r" || string(clonedSignature.Signature.S) != "s" {
+		t.Fatalf("signature scalars were not deep copied: r=%q s=%q", string(clonedSignature.Signature.R), string(clonedSignature.Signature.S))
+	}
+	if string(clonedSignature.Signature.SignedInput) != "input" {
+		t.Fatalf("signed input was not deep copied: %q", string(clonedSignature.Signature.SignedInput))
+	}
+	if string(clonedSignature.Signature.PublicKey) != "pub" {
+		t.Fatalf("public key was not deep copied: %q", string(clonedSignature.Signature.PublicKey))
+	}
+}
+
 func TestValidateControlMessage(t *testing.T) {
 	t.Parallel()
 
