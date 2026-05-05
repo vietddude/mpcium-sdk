@@ -12,7 +12,7 @@ import (
 )
 
 func TestSessionECDSAKeygenAndSign(t *testing.T) {
-	participants, coordinator, err := newTestParticipants(3)
+	participants, Orchestrator, err := newTestParticipants(3)
 	if err != nil {
 		t.Fatalf("newTestParticipants() error = %v", err)
 	}
@@ -47,8 +47,8 @@ func TestSessionECDSAKeygenAndSign(t *testing.T) {
 		}
 	}
 
-	sessions := createSessions(t, keygenStart, participants, coordinator)
-	keygenResults := driveSession(t, keygenStart.SessionID, sessions, coordinator)
+	sessions := createSessions(t, keygenStart, participants, Orchestrator)
+	keygenResults := driveSession(t, keygenStart.SessionID, sessions, Orchestrator)
 	for id, result := range keygenResults {
 		if result == nil || result.KeyShare == nil || len(result.KeyShare.ShareBlob) == 0 {
 			t.Fatalf("keygen result missing share blob for %s", id)
@@ -68,8 +68,8 @@ func TestSessionECDSAKeygenAndSign(t *testing.T) {
 		Sign: &protocol.SignPayload{KeyID: "ecdsa-key", SigningInput: []byte("ecdsa-message")},
 	}
 
-	signSessions := createSessions(t, signStart, participants, coordinator)
-	signResults := driveSession(t, signStart.SessionID, signSessions, coordinator)
+	signSessions := createSessions(t, signStart, participants, Orchestrator)
+	signResults := driveSession(t, signStart.SessionID, signSessions, Orchestrator)
 	for id, result := range signResults {
 		if result == nil || result.Signature == nil || len(result.Signature.Signature) == 0 {
 			t.Fatalf("sign result missing signature for %s", id)
@@ -78,7 +78,7 @@ func TestSessionECDSAKeygenAndSign(t *testing.T) {
 }
 
 func TestSessionEdDSAKeygenAndSign(t *testing.T) {
-	participants, coordinator, err := newTestParticipants(3)
+	participants, Orchestrator, err := newTestParticipants(3)
 	if err != nil {
 		t.Fatalf("newTestParticipants() error = %v", err)
 	}
@@ -96,8 +96,8 @@ func TestSessionEdDSAKeygenAndSign(t *testing.T) {
 		Keygen: &protocol.KeygenPayload{KeyID: "eddsa-key"},
 	}
 
-	sessions := createSessions(t, keygenStart, participants, coordinator)
-	keygenResults := driveSession(t, keygenStart.SessionID, sessions, coordinator)
+	sessions := createSessions(t, keygenStart, participants, Orchestrator)
+	keygenResults := driveSession(t, keygenStart.SessionID, sessions, Orchestrator)
 	for id, result := range keygenResults {
 		if result == nil || result.KeyShare == nil || len(result.KeyShare.ShareBlob) == 0 {
 			t.Fatalf("keygen result missing share blob for %s", id)
@@ -117,8 +117,8 @@ func TestSessionEdDSAKeygenAndSign(t *testing.T) {
 		Sign: &protocol.SignPayload{KeyID: "eddsa-key", SigningInput: []byte("eddsa-message")},
 	}
 
-	signSessions := createSessions(t, signStart, participants, coordinator)
-	signResults := driveSession(t, signStart.SessionID, signSessions, coordinator)
+	signSessions := createSessions(t, signStart, participants, Orchestrator)
+	signResults := driveSession(t, signStart.SessionID, signSessions, Orchestrator)
 	for id, result := range signResults {
 		if result == nil || result.Signature == nil || len(result.Signature.Signature) == 0 {
 			t.Fatalf("sign result missing signature for %s", id)
@@ -127,7 +127,7 @@ func TestSessionEdDSAKeygenAndSign(t *testing.T) {
 }
 
 func TestSessionRejectsMPCBeginBeforeKeyExchange(t *testing.T) {
-	participants, coordinator, err := newTestParticipants(2)
+	participants, Orchestrator, err := newTestParticipants(2)
 	if err != nil {
 		t.Fatalf("newTestParticipants() error = %v", err)
 	}
@@ -142,17 +142,17 @@ func TestSessionRejectsMPCBeginBeforeKeyExchange(t *testing.T) {
 		},
 		Keygen: &protocol.KeygenPayload{KeyID: "k"},
 	}
-	session := createSessions(t, start, participants[:1], coordinator)[participants[0].id.id]
+	session := createSessions(t, start, participants[:1], Orchestrator)[participants[0].id.id]
 	if _, err := session.Start(); err != nil {
 		t.Fatalf("Session.Start() error = %v", err)
 	}
 	ctrl := &protocol.ControlMessage{
-		SessionID:     start.SessionID,
-		Sequence:      1,
-		CoordinatorID: coordinator.id,
-		MPCBegin:      &protocol.MPCBegin{},
+		SessionID:      start.SessionID,
+		Sequence:       1,
+		OrchestratorID: Orchestrator.id,
+		MPCBegin:       &protocol.MPCBegin{},
 	}
-	ctrl.Signature = ed25519.Sign(coordinator.priv, protocol.MustControlSigningBytes(ctrl))
+	ctrl.Signature = ed25519.Sign(Orchestrator.priv, protocol.MustControlSigningBytes(ctrl))
 	if _, err := session.HandleControl(ctrl); err != ErrKeyExchangeRequired {
 		t.Fatalf("HandleControl(MPCBegin) error = %v, want %v", err, ErrKeyExchangeRequired)
 	}
@@ -166,10 +166,10 @@ type participantFixture struct {
 	checkpoints *memorySessionCheckpointStore
 }
 
-type coordinatorFixture struct {
+type OrchestratorFixture struct {
 	id     string
 	priv   ed25519.PrivateKey
-	lookup *testCoordinatorLookup
+	lookup *testOrchestratorLookup
 }
 
 type queuedMessage struct {
@@ -177,13 +177,13 @@ type queuedMessage struct {
 	msg    *protocol.PeerMessage
 }
 
-func newTestParticipants(count int) ([]participantFixture, coordinatorFixture, error) {
+func newTestParticipants(count int) ([]participantFixture, OrchestratorFixture, error) {
 	peerLookup := &testPeerLookup{keys: make(map[string]ed25519.PublicKey, count)}
 	fixtures := make([]participantFixture, 0, count)
 	for i := 0; i < count; i++ {
 		pub, priv, err := ed25519.GenerateKey(rand.Reader)
 		if err != nil {
-			return nil, coordinatorFixture{}, err
+			return nil, OrchestratorFixture{}, err
 		}
 		identity := &testIdentity{id: fmt.Sprintf("peer-%d", i+1), pub: pub, priv: priv}
 		peerLookup.keys[identity.id] = pub
@@ -195,15 +195,15 @@ func newTestParticipants(count int) ([]participantFixture, coordinatorFixture, e
 			checkpoints: &memorySessionCheckpointStore{values: map[string][]byte{}},
 		})
 	}
-	coordinatorPub, coordinatorPriv, err := ed25519.GenerateKey(rand.Reader)
+	OrchestratorPub, OrchestratorPriv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
-		return nil, coordinatorFixture{}, err
+		return nil, OrchestratorFixture{}, err
 	}
-	coordinatorLookup := &testCoordinatorLookup{keys: map[string]ed25519.PublicKey{"coordinator-1": coordinatorPub}}
-	return fixtures, coordinatorFixture{id: "coordinator-1", priv: coordinatorPriv, lookup: coordinatorLookup}, nil
+	OrchestratorLookup := &testOrchestratorLookup{keys: map[string]ed25519.PublicKey{"orch-1": OrchestratorPub}}
+	return fixtures, OrchestratorFixture{id: "orch-1", priv: OrchestratorPriv, lookup: OrchestratorLookup}, nil
 }
 
-func createSessions(t *testing.T, start *protocol.SessionStart, fixtures []participantFixture, coordinator coordinatorFixture) map[string]*ParticipantSession {
+func createSessions(t *testing.T, start *protocol.SessionStart, fixtures []participantFixture, Orchestrator OrchestratorFixture) map[string]*ParticipantSession {
 	t.Helper()
 	sessions := make(map[string]*ParticipantSession, len(fixtures))
 	for _, fixture := range fixtures {
@@ -212,7 +212,7 @@ func createSessions(t *testing.T, start *protocol.SessionStart, fixtures []parti
 			LocalParticipantID: fixture.id.id,
 			Identity:           fixture.id,
 			Peers:              fixture.lookup,
-			Coordinator:        coordinator.lookup,
+			Orchestrator:       Orchestrator.lookup,
 			Preparams:          fixture.preparams,
 			Shares:             fixture.shares,
 			SessionCheckpoint:  fixture.checkpoints,
@@ -225,7 +225,7 @@ func createSessions(t *testing.T, start *protocol.SessionStart, fixtures []parti
 	return sessions
 }
 
-func driveSession(t *testing.T, sessionID string, sessions map[string]*ParticipantSession, coordinator coordinatorFixture) map[string]*Result {
+func driveSession(t *testing.T, sessionID string, sessions map[string]*ParticipantSession, Orchestrator OrchestratorFixture) map[string]*Result {
 	t.Helper()
 	pending := make([]queuedMessage, 0, 64)
 	results := make(map[string]*Result, len(sessions))
@@ -239,13 +239,13 @@ func driveSession(t *testing.T, sessionID string, sessions map[string]*Participa
 	}
 	for id, session := range sessions {
 		ctrl := &protocol.ControlMessage{
-			SessionID:     sessionID,
-			Sequence:      1,
-			CoordinatorID: coordinator.id,
-			KeyExchange:   &protocol.KeyExchangeBegin{ExchangeID: "kx-1"},
+			SessionID:      sessionID,
+			Sequence:       1,
+			OrchestratorID: Orchestrator.id,
+			KeyExchange:    &protocol.KeyExchangeBegin{ExchangeID: "kx-1"},
 		}
 		payload := protocol.MustControlSigningBytes(ctrl)
-		ctrl.Signature = ed25519.Sign(coordinator.priv, payload)
+		ctrl.Signature = ed25519.Sign(Orchestrator.priv, payload)
 
 		effects, err := session.HandleControl(ctrl)
 		if err != nil {
@@ -261,13 +261,13 @@ func driveSession(t *testing.T, sessionID string, sessions map[string]*Participa
 
 	for id, session := range sessions {
 		ctrl := &protocol.ControlMessage{
-			SessionID:     sessionID,
-			Sequence:      2,
-			CoordinatorID: coordinator.id,
-			MPCBegin:      &protocol.MPCBegin{},
+			SessionID:      sessionID,
+			Sequence:       2,
+			OrchestratorID: Orchestrator.id,
+			MPCBegin:       &protocol.MPCBegin{},
 		}
 		payload := protocol.MustControlSigningBytes(ctrl)
-		ctrl.Signature = ed25519.Sign(coordinator.priv, payload)
+		ctrl.Signature = ed25519.Sign(Orchestrator.priv, payload)
 
 		effects, err := session.HandleControl(ctrl)
 		if err != nil {
@@ -378,12 +378,12 @@ func (l *testPeerLookup) LookupParticipant(participantID string) (ed25519.Public
 	return key, nil
 }
 
-type testCoordinatorLookup struct{ keys map[string]ed25519.PublicKey }
+type testOrchestratorLookup struct{ keys map[string]ed25519.PublicKey }
 
-func (l *testCoordinatorLookup) LookupCoordinator(coordinatorID string) (ed25519.PublicKey, error) {
-	key, ok := l.keys[coordinatorID]
+func (l *testOrchestratorLookup) LookupOrchestrator(OrchestratorID string) (ed25519.PublicKey, error) {
+	key, ok := l.keys[OrchestratorID]
 	if !ok {
-		return nil, fmt.Errorf("coordinator %s not found", coordinatorID)
+		return nil, fmt.Errorf("orchestrator %s not found", OrchestratorID)
 	}
 	return key, nil
 }

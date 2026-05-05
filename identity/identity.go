@@ -12,6 +12,6 @@ type PeerLookup interface {
 	LookupParticipant(participantID string) (ed25519.PublicKey, error)
 }
 
-type CoordinatorLookup interface {
-	LookupCoordinator(coordinatorID string) (ed25519.PublicKey, error)
+type OrchestratorLookup interface {
+	LookupOrchestrator(orchestratorID string) (ed25519.PublicKey, error)
 }

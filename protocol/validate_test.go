@@ -223,11 +223,11 @@ func TestValidateControlMessage(t *testing.T) {
 	t.Parallel()
 
 	message := &ControlMessage{
-		SessionID:     "session-1",
-		CoordinatorID: "coordinator-1",
-		Sequence:      1,
-		Signature:     []byte{1},
-		SessionStart:  validSessionStart(),
+		SessionID:      "session-1",
+		OrchestratorID: "orch-1",
+		Sequence:       1,
+		Signature:      []byte{1},
+		SessionStart:   validSessionStart(),
 	}
 	if err := ValidateControlMessage(message); err != nil {
 		t.Fatalf("ValidateControlMessage() error = %v", err)
@@ -239,11 +239,11 @@ func TestValidateControlMessage(t *testing.T) {
 	}
 
 	keyExchange := &ControlMessage{
-		SessionID:     "session-1",
-		CoordinatorID: "coordinator-1",
-		Sequence:      2,
-		Signature:     []byte{1},
-		KeyExchange:   &KeyExchangeBegin{ExchangeID: "kx-1"},
+		SessionID:      "session-1",
+		OrchestratorID: "orch-1",
+		Sequence:       2,
+		Signature:      []byte{1},
+		KeyExchange:    &KeyExchangeBegin{ExchangeID: "kx-1"},
 	}
 	if err := ValidateControlMessage(keyExchange); err != nil {
 		t.Fatalf("ValidateControlMessage(key exchange) error = %v", err)

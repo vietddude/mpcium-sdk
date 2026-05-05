@@ -125,8 +125,8 @@ func ValidateControlMessage(msg *ControlMessage) error {
 	if msg.SessionID == "" {
 		return ErrMissingSessionID
 	}
-	if msg.CoordinatorID == "" {
-		return fmt.Errorf("%w: coordinator_id", ErrInvalidPayload)
+	if msg.OrchestratorID == "" {
+		return fmt.Errorf("%w: orchestrator_id", ErrInvalidPayload)
 	}
 	if len(msg.Signature) == 0 {
 		return ErrMissingSignature

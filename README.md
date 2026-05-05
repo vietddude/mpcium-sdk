@@ -1,13 +1,13 @@
 # mpcium-sdk
 
-Thin participant-side SDK on top of `tss-lib`, designed to run with an external coordinator/relay architecture.
+Thin participant-side SDK on top of `tss-lib`, designed to run with an external Orchestrator/relay architecture.
 
 Current supported runtime flow:
 
-1. `SessionStart` is created by coordinator.
-2. Coordinator sends `KeyExchangeBegin(exchange_id)`.
+1. `SessionStart` is created by Orchestrator.
+2. Orchestrator sends `KeyExchangeBegin(exchange_id)`.
 3. Participants exchange signed `key_exchange_hello` messages.
-4. Coordinator sends `MPCBegin`.
+4. Orchestrator sends `MPCBegin`.
 5. SDK runs `keygen/sign` rounds via `tss-lib`.
 6. Direct MPC packets are encrypted (E2E); broadcast packets are signed only.
 
@@ -37,7 +37,7 @@ Current supported runtime flow:
 
 ## Minimal integration example
 
-Below is a minimal coordinator-to-participant integration skeleton.
+Below is a minimal orchestrator-to-participant integration skeleton.
 
 ```go
 package main
@@ -53,7 +53,7 @@ import (
 // 1) Implement required interfaces:
 // - identity.LocalIdentity
 // - identity.PeerLookup
-// - identity.CoordinatorLookup
+// - identity.OrchestratorLookup
 // - storage.PreparamsStore / ShareStore / SessionCheckpointStore
 
 func runSession(
@@ -80,7 +80,7 @@ func runSession(
 		return err
 	}
 
-	// 2) Handle control from coordinator:
+	// 2) Handle control from Orchestrator:
 	//    a) KeyExchangeBegin (required)
 	//    b) MPCBegin (only after key exchange done)
 	handleControl := func(ctrl *protocol.ControlMessage) error {
@@ -123,9 +123,9 @@ func runSession(
 	return nil
 }
 
-// Coordinator signing reminder:
+// Orchestrator signing reminder:
 // - Build control payload using protocol.ControlSigningBytes(msg)
-// - Sign bytes with coordinator private key (ed25519)
+// - Sign bytes with orchestrator private key (ed25519)
 func signControl(priv ed25519.PrivateKey, msg *protocol.ControlMessage) error {
 	payload, err := protocol.ControlSigningBytes(msg)
 	if err != nil {

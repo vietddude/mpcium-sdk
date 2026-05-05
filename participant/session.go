@@ -60,9 +60,9 @@ type Config struct {
 	// Peers resolves a participant ID to its Ed25519 public key for
 	// verifying inbound peer-to-peer messages.
 	Peers identity.PeerLookup
-	// Coordinator resolves a coordinator ID to its Ed25519 public key for
+	// Orchestrator resolves a Orchestrator ID to its Ed25519 public key for
 	// verifying inbound control messages (SessionStart, KeyExchange, MPCBegin).
-	Coordinator identity.CoordinatorLookup
+	Orchestrator identity.OrchestratorLookup
 	// Preparams stores Paillier preparams used by ECDSA keygen. Required
 	// for ECDSA keygen; unused for EdDSA and for signing.
 	Preparams storage.PreparamsStore
@@ -181,7 +181,7 @@ type ParticipantSession struct {
 	// sequence; enforces strict monotonicity to reject replays.
 	controlSeqSeen uint64
 
-	// activeExchangeID is the coordinator-assigned ID for the current
+	// activeExchangeID is the orchestrator-assigned ID for the current
 	// X25519 key exchange round. Empty before the first KeyExchange
 	// control message and after a terminal transition.
 	activeExchangeID string
@@ -225,8 +225,8 @@ func New(cfg Config) (*ParticipantSession, error) {
 	if cfg.Peers == nil {
 		return nil, errors.New("participant: missing peer lookup")
 	}
-	if cfg.Coordinator == nil {
-		return nil, errors.New("participant: missing coordinator lookup")
+	if cfg.Orchestrator == nil {
+		return nil, errors.New("participant: missing Orchestrator lookup")
 	}
 
 	sorted := protocol.CanonicalParticipants(cfg.Start.Participants)
@@ -413,7 +413,7 @@ func (s *ParticipantSession) Status() Status {
 }
 
 func (s *ParticipantSession) verifyControlSignature(msg *protocol.ControlMessage) error {
-	publicKey, err := s.cfg.Coordinator.LookupCoordinator(msg.CoordinatorID)
+	publicKey, err := s.cfg.Orchestrator.LookupOrchestrator(msg.OrchestratorID)
 	if err != nil {
 		return err
 	}

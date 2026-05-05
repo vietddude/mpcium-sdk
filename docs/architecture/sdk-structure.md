@@ -7,10 +7,10 @@ as a starting point before diving into any single file.
 ## What this SDK is
 
 `mpcium-sdk` is the **participant-side** runtime of an MPC (threshold
-signature) system. It does not run a coordinator, a relay, or a broker.
+signature) system. It does not run a Orchestrator, a relay, or a broker.
 It runs on a single participant's machine (server, mobile, or desktop)
 and performs `tss-lib` rounds against peers under the direction of an
-external coordinator.
+external Orchestrator.
 
 Two entry points are provided:
 
@@ -78,12 +78,12 @@ and must not know about mobile, transports, or event queues.
 
 | Package               | Purpose                                                                                                                                                                                                                                                                                                                                                   | Key types / files                                                 |
 | --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
-| `protocol`            | Canonical JSON wire contracts between coordinator and participants: message types, validation rules, and signing-bytes helpers. Zero SDK deps so coordinator and participant can share it verbatim.                                                                                                                                                       | `types.go`, `validate.go`, `signing.go`                           |
-| `identity`            | Abstract interfaces for the local ed25519 signing identity and for looking up peer / coordinator public keys. The host app provides the implementation.                                                                                                                                                                                                   | `LocalIdentity`, `PeerLookup`, `CoordinatorLookup`                |
+| `protocol`            | Canonical JSON wire contracts between Orchestrator and participants: message types, validation rules, and signing-bytes helpers. Zero SDK deps so Orchestrator and participant can share it verbatim.                                                                                                                                                       | `types.go`, `validate.go`, `signing.go`                           |
+| `identity`            | Abstract interfaces for the local ed25519 signing identity and for looking up peer / orchestrator public keys. The host app provides the implementation.                                                                                                                                                                                                   | `LocalIdentity`, `PeerLookup`, `OrchestratorLookup`                |
 | `storage`             | Abstract interfaces for all persistent state the runtime needs: ECDSA preparams slots, key shares, and per-session resume checkpoints. Also host-provided.                                                                                                                                                                                                 | `PreparamsStore`, `ShareStore`, `SessionCheckpointStore`          |
 | `internal/wirecrypto` | Internal helper for direct (unicast) MPC packets: X25519 key agreement, HKDF, ChaCha20-Poly1305 encryption with envelope-bound AAD. Broadcast packets are sign-only and do not use this package.                                                                                                                                                          | `KeyPair`, `GenerateKeyPair`, `EncryptDirect`, `DecryptDirect`    |
 | `participant`         | The core SDK: the session state machine that drives `tss-lib` rounds, handles `ControlMessage` / `PeerMessage`, emits `SessionEvent` and `Result`. Pure logic — no I/O, no timers, no transport. Also owns preparams-slot rotation.                                                                                                                       | `ParticipantSession`, `Actions`, `Config`, `RotatePreparamsSlot`  |
-| `mobilecore`          | Wires `participant` sessions to a transport (`Relay` interface, with a `nativeRelay` wrapper that adapts any host-provided `TransportAdapter` — MQTT, NATS, etc.), a keyvalue store (`StoreAdapter`), coordinator identity lookup, topic naming, and an in-memory event queue for the host UI. Handles presence, approval prompts, and session lifecycle. | `Runtime`, `Relay`, `Stores`, `Config`, `RuntimeEvent`, topics.go |
+| `mobilecore`          | Wires `participant` sessions to a transport (`Relay` interface, with a `nativeRelay` wrapper that adapts any host-provided `TransportAdapter` — MQTT, NATS, etc.), a keyvalue store (`StoreAdapter`), Orchestrator identity lookup, topic naming, and an in-memory event queue for the host UI. Handles presence, approval prompts, and session lifecycle. | `Runtime`, `Relay`, `Stores`, `Config`, `RuntimeEvent`, topics.go |
 | `mobile`              | Thin `gomobile`-compatible facade over `mobilecore`. Exposes a JSON-string API (`NewClient`, `Start`, `PollEvents`, `ApproveSign`, …) and lets the host register `TransportAdapter` and `StoreAdapter` implementations written in Kotlin/Swift.                                                                                                           | `Client`, `TransportAdapter`, `StoreAdapter`                      |
 | `examples/`           | Runnable integration skeletons: `keygen_flow` for a server-style Go integration, `mobile-android` for the Android host that consumes the gomobile `.aar`.                                                                                                                                                                                                 | `examples/keygen_flow`, `examples/mobile-android`                 |
 | `docs/`               | Architecture notes (this file, external/mobile cosigner runtime design).                                                                                                                                                                                                                                                                                  | `docs/architecture/*`                                             |
@@ -95,7 +95,7 @@ and `mobilecore.Runtime` in front of `ParticipantSession`):
 
 ```
                        ┌──────────────┐
-                       │ Coordinator  │
+                       │ Orchestrator  │
                        └──────┬───────┘
                               │ signed ControlMessage
                               ▼
@@ -133,16 +133,16 @@ owns the transport.
 These show how an integrator drives the SDK over time. The "Host app"
 column is whatever your code is — a server process, `mobilecore`, or a
 mobile runtime. Only the participant-side is owned by this SDK; the
-coordinator and peers are external systems you must provide.
+Orchestrator and peers are external systems you must provide.
 
 ### 1. Keygen session
 
-The canonical flow. The coordinator picks a committee and a threshold;
+The canonical flow. The Orchestrator picks a committee and a threshold;
 participants exchange X25519 keys, then run `tss-lib` keygen rounds and
 persist their share.
 
 ```
-Coordinator      Host app / Transport        ParticipantSession         Peers
+Orchestrator      Host app / Transport        ParticipantSession         Peers
      │                   │                            │                   │
      │─ControlMsg────────▶                            │                   │
      │  (SessionStart)   │                            │                   │
@@ -191,7 +191,7 @@ starts — if the user declines or the approval times out, the SDK sends
 back `RequestRejected` and never runs the MPC rounds.
 
 ```
-Coordinator    mobile.Client    mobilecore.Runtime    ParticipantSession    Peers
+Orchestrator    mobile.Client    mobilecore.Runtime    ParticipantSession    Peers
      │              │                   │                      │             │
      │─ControlMsg──▶│                   │                      │             │
      │ (SessionStart                    │                      │             │
@@ -239,7 +239,7 @@ Android/iOS app              mobile.Client          mobilecore.Runtime
       │                                                      │
       │◀── PollEvents(max) ───────│◀── "presence_online" ───│
       │                                                      │
-      │  (coordinator triggers a sign)                       │
+      │  (orchestrator triggers a sign)                       │
       │◀── PollEvents(max) ───────│◀── "sign_approval_required"
       │                                                      │
       │─ ApproveSign(sid, true, "") ─▶                       │
@@ -253,7 +253,7 @@ Android/iOS app              mobile.Client          mobilecore.Runtime
 Integration checklist for a host app:
 
 1. Implement `identity.LocalIdentity` / `PeerLookup` /
-   `CoordinatorLookup` (server) **or** provide `TransportAdapter` +
+   `OrchestratorLookup` (server) **or** provide `TransportAdapter` +
    `StoreAdapter` (mobile).
 2. Implement `storage.PreparamsStore`, `ShareStore`,
    `SessionCheckpointStore` (server) **or** let `mobilecore` back them
@@ -273,14 +273,14 @@ Things that matter when reviewing a change in this codebase.
 
 The SDK assumes the **transport is untrusted** (an MQTT broker or NATS
 server can be compromised, messages can be reordered, replayed, or
-spoofed). It does **not** assume the coordinator is trusted to see MPC
-payloads — it only trusts the coordinator to schedule sessions.
+spoofed). It does **not** assume the Orchestrator is trusted to see MPC
+payloads — it only trusts the Orchestrator to schedule sessions.
 
 What protects what:
 
 | Message class                         | Signed by                     | Encrypted?                                        | Replay protection              |
 | ------------------------------------- | ----------------------------- | ------------------------------------------------- | ------------------------------ |
-| `ControlMessage`                      | Coordinator (ed25519)         | No                                                | `Sequence` monotonic check     |
+| `ControlMessage`                      | Orchestrator (ed25519)         | No                                                | `Sequence` monotonic check     |
 | `PeerMessage` / `KeyExchangeHello`    | Sender participant (ed25519)  | No                                                | Covered by AEAD AAD            |
 | `PeerMessage` / `MPCPacket` direct    | Sender participant (ed25519)  | Yes — ChaCha20-Poly1305, per-pair X25519-HKDF key | AEAD nonce + AAD over envelope |
 | `PeerMessage` / `MPCPacket` broadcast | Sender participant (ed25519)  | No — signature only                               | Covered by signature           |
@@ -315,7 +315,7 @@ this map when changing the package or its callers.
 
 | Function                  | Called from                          | Use case                                                                                                                                          |
 | ------------------------- | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `GenerateKeyPair`         | `session.go` `beginKeyExchange`      | Mints the participant's ephemeral X25519 keypair when the coordinator sends `KeyExchangeBegin`. One keypair per session, never persisted.         |
+| `GenerateKeyPair`         | `session.go` `beginKeyExchange`      | Mints the participant's ephemeral X25519 keypair when the orchestrator sends `KeyExchangeBegin`. One keypair per session, never persisted.         |
 | `KeyPair.PublicKeyBytes`  | `session.go` `beginKeyExchange`      | Embedded into the outgoing `KeyExchangeHello` so peers can derive the shared secret to this participant.                                          |
 | `EncryptDirect`           | `session.go` `toPeerMessage` (sign)  | Encrypts an MPC round packet to a single recipient. Returns `(nonce, ciphertext)` that get attached to the outgoing `MPCPacket` before signing.   |
 | `DecryptDirect`           | `session.go` `decryptDirectPacket`   | Decrypts an inbound MPC packet inside `HandlePeer`. Output is fed to `tss-lib` via `party.UpdateFromBytes`.                                       |
@@ -324,7 +324,7 @@ this map when changing the package or its callers.
 End-to-end view of how those calls compose during one session:
 
 ```
-Coordinator → KeyExchangeBegin
+Orchestrator → KeyExchangeBegin
         │
         ▼
 beginKeyExchange()
@@ -452,7 +452,7 @@ Gotchas:
 
 ### Wire format stability
 
-The JSON encoding **is** the protocol. Both the coordinator and the
+The JSON encoding **is** the protocol. Both the Orchestrator and the
 participants serialise and re-serialise the same Go types, and
 signatures + AEAD AAD cover the exact bytes. Consequences:
 

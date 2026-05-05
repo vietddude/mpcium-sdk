@@ -46,7 +46,7 @@ func TestNewClientRequiresAdapters(t *testing.T) {
 	registeredStoreAd = nil
 	adapterMu.Unlock()
 
-	cfg := `{"node_id":"peer-01","coordinator_id":"coord-01","coordinator_public_key_base64":"` + base64.StdEncoding.EncodeToString(make([]byte, 32)) + `"}`
+	cfg := `{"node_id":"peer-01","orchestrator_id":"coord-01","orchestrator_public_key_base64":"` + base64.StdEncoding.EncodeToString(make([]byte, 32)) + `"}`
 	_, err := NewClient(cfg)
 	if err == nil {
 		t.Fatalf("NewClient() expected error when adapters are missing")
@@ -61,7 +61,7 @@ func TestNewClientWithRegisteredAdapters(t *testing.T) {
 		t.Fatalf("RegisterStoreAdapter() error = %v", err)
 	}
 
-	cfg := `{"node_id":"peer-01","coordinator_id":"coord-01","coordinator_public_key_base64":"` + base64.StdEncoding.EncodeToString(make([]byte, 32)) + `"}`
+	cfg := `{"node_id":"peer-01","orchestrator_id":"coord-01","orchestrator_public_key_base64":"` + base64.StdEncoding.EncodeToString(make([]byte, 32)) + `"}`
 	client, err := NewClient(cfg)
 	if err != nil {
 		t.Fatalf("NewClient() error = %v", err)

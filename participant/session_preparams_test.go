@@ -77,7 +77,7 @@ func TestResolveECDSAPreparamsPinsSessionSlot(t *testing.T) {
 
 func newECDSAKeygenSessionForPreparams(t *testing.T) *ParticipantSession {
 	t.Helper()
-	participants, coordinator, err := newTestParticipants(2)
+	participants, Orchestrator, err := newTestParticipants(2)
 	if err != nil {
 		t.Fatalf("newTestParticipants() error = %v", err)
 	}
@@ -92,6 +92,6 @@ func newECDSAKeygenSessionForPreparams(t *testing.T) *ParticipantSession {
 		},
 		Keygen: &protocol.KeygenPayload{KeyID: "preparams-test-key"},
 	}
-	sessions := createSessions(t, start, participants[:1], coordinator)
+	sessions := createSessions(t, start, participants[:1], Orchestrator)
 	return sessions[participants[0].id.id]
 }

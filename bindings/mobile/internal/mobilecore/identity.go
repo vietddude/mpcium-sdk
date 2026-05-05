@@ -60,28 +60,28 @@ func (l *peerLookup) LookupParticipant(participantID string) (ed25519.PublicKey,
 	return append([]byte(nil), key...), nil
 }
 
-type coordinatorLookup struct {
+type OrchestratorLookup struct {
 	keys map[string]ed25519.PublicKey
 }
 
-func newCoordinatorLookup(coordinatorID string, publicKey []byte) (*coordinatorLookup, error) {
-	if coordinatorID == "" {
-		return nil, fmt.Errorf("coordinator_id is required")
+func newOrchestratorLookup(orchestratorID string, publicKey []byte) (*OrchestratorLookup, error) {
+	if orchestratorID == "" {
+		return nil, fmt.Errorf("orchestrator_id is required")
 	}
 	if len(publicKey) != ed25519.PublicKeySize {
-		return nil, fmt.Errorf("invalid coordinator public key size")
+		return nil, fmt.Errorf("invalid orchestrator public key size")
 	}
-	return &coordinatorLookup{
+	return &OrchestratorLookup{
 		keys: map[string]ed25519.PublicKey{
-			coordinatorID: append([]byte(nil), publicKey...),
+			orchestratorID: append([]byte(nil), publicKey...),
 		},
 	}, nil
 }
 
-func (l *coordinatorLookup) LookupCoordinator(coordinatorID string) (ed25519.PublicKey, error) {
-	key, ok := l.keys[coordinatorID]
+func (l *OrchestratorLookup) LookupOrchestrator(orchestratorID string) (ed25519.PublicKey, error) {
+	key, ok := l.keys[orchestratorID]
 	if !ok {
-		return nil, fmt.Errorf("coordinator %s not found", coordinatorID)
+		return nil, fmt.Errorf("orchestrator %s not found", orchestratorID)
 	}
 	return append([]byte(nil), key...), nil
 }

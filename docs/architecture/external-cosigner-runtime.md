@@ -14,7 +14,7 @@ Core direction:
 - Internal `mpcium node` workers continue to communicate over `NATS`.
 - External and mobile cosigners connect through `MQTT`.
 - `Relay` is also the MQTT broker, but it is transport-only.
-- `Coordinator` is the control-plane authority for request intake, session management, participant selection, and lifecycle transitions.
+- `Orchestrator` is the control-plane authority for request intake, session management, participant selection, and lifecycle transitions.
 - MPC packets are end-to-end peer-to-peer messages after a dedicated key exchange round.
 
 ## Problem Statement
@@ -41,22 +41,22 @@ That model is not sufficient once we introduce:
 
 - Relay does not execute MPC logic.
 - Relay does not decrypt MPC payloads.
-- Coordinator does not inspect or process MPC round payloads.
+- Orchestrator does not inspect or process MPC round payloads.
 - Mobile or end-user apps do not own session truth.
 
 ## High-Level Decisions
 
-1. Introduce a dedicated `Coordinator` runtime.
-2. Keep `Relay` separate from `Coordinator` at the responsibility level.
+1. Introduce a dedicated `Orchestrator` runtime.
+2. Keep `Relay` separate from `Orchestrator` at the responsibility level.
 3. Keep `mpcium node` as a worker runtime, not a session authority.
 4. Introduce a dedicated `Round 0` key exchange before normal MPC rounds.
 5. Treat all MPC round packets after key exchange as end-to-end encrypted peer-to-peer messages.
 6. Use versioned topic namespaces for the new runtime instead of reusing the current ad-hoc subject format.
-7. Start with coordinator fan-out for control messages instead of a dedicated control broadcast topic.
+7. Start with Orchestrator fan-out for control messages instead of a dedicated control broadcast topic.
 
 ## Runtime Layout
 
-### Coordinator
+### Orchestrator
 Owns the control plane.
 
 Responsibilities:
@@ -112,7 +112,7 @@ Responsibilities:
 ## Control Plane And Data Plane
 
 ### Control Plane
-Owned by `Coordinator`.
+Owned by `Orchestrator`.
 
 Used for:
 
@@ -135,24 +135,24 @@ Used for:
 
 Key rule:
 
-- `Coordinator` manages session lifecycle but never reads MPC packet bodies.
+- `Orchestrator` manages session lifecycle but never reads MPC packet bodies.
 - `Relay` forwards packets but never interprets MPC semantics.
 
 ## Proposed Deployment
 
-- `coordinator-runtime`
+- `orch-runtime`
 - `relay-runtime`
 - `mpcium node`
 - `external cosigner`
 - `mobile cosigner`
 
-The coordinator may initially be deployed in the same environment as internal services, but it should remain a separate runtime or module from both relay and worker nodes.
+The Orchestrator may initially be deployed in the same environment as internal services, but it should remain a separate runtime or module from both relay and worker nodes.
 
 ## Architecture Diagram
 
 ```mermaid
 flowchart LR
-    App["App / API Client"] -->|"request keygen / sign / reshare"| Coord["Coordinator"]
+    App["App / API Client"] -->|"request keygen / sign / reshare"| Coord["Orchestrator"]
 
     Coord -->|"create session + choose participants"| NATS["NATS"]
     Coord -->|"session control for external peers"| Relay["Relay + MQTT Broker"]
@@ -184,7 +184,7 @@ flowchart LR
 ```mermaid
 sequenceDiagram
     participant A as "App / API Client"
-    participant C as "Coordinator"
+    participant C as "Orchestrator"
     participant N as "NATS"
     participant I as "Internal mpcium node"
     participant R as "Relay + MQTT Broker"
@@ -256,7 +256,7 @@ flowchart TD
 - Topic naming should be transport-neutral at the logical level.
 - `NATS` and `MQTT` use the same logical structure with different separators.
 - Each peer has a stable control inbox and a session-scoped p2p inbox.
-- Phase 1 avoids broadcast topics for control messages. Coordinator fans out control messages to each participant inbox.
+- Phase 1 avoids broadcast topics for control messages. Orchestrator fans out control messages to each participant inbox.
 
 ### Logical Namespace
 
@@ -285,7 +285,7 @@ Relay should bridge:
 - external peer control inboxes
 - external peer p2p inboxes
 - presence events
-- session lifecycle events from external participants back to coordinator
+- session lifecycle events from external participants back to Orchestrator
 
 Relay should not mutate session payload shape.
 
@@ -300,7 +300,7 @@ MVP messages use minimal typed envelopes. Extra observability metadata can be ad
   "type": "session.start",
   "session_id": "sess_01HXYZ",
   "op": "sign",
-  "from": "coordinator",
+  "from": "Orchestrator",
   "to": "peer-mobile-01",
   "body": {}
 }
@@ -407,7 +407,7 @@ This message is sent peer-to-peer during round 0. It is not encrypted yet, but i
 
 ## Security Model
 
-- Control messages are signed by `Coordinator`.
+- Control messages are signed by `Orchestrator`.
 - Key exchange hello messages are signed by the sender identity.
 - All MPC packets after key exchange are end-to-end encrypted.
 - The packet encryption algorithm is fixed in MVP and not carried per packet.
@@ -420,29 +420,29 @@ This message is sent peer-to-peer during round 0. It is not encrypted yet, but i
 
 ## Session Ownership Rules
 
-- `Coordinator` is the single authority for session lifecycle.
+- `Orchestrator` is the single authority for session lifecycle.
 - `Relay` may expose presence and mailbox state, but it is not the session owner.
 - `mpcium node` workers do not decide session creation or participant assignment.
 - External cosigners and mobile cosigners do not own global session truth.
 
-## Why Coordinator Is Not Relay
+## Why Orchestrator Is Not Relay
 
-`Relay` and `Coordinator` should remain separate responsibilities because they scale and fail differently.
+`Relay` and `Orchestrator` should remain separate responsibilities because they scale and fail differently.
 
 - Relay scales with connections and message forwarding.
-- Coordinator scales with active session count and lifecycle state.
+- Orchestrator scales with active session count and lifecycle state.
 - Relay should remain transport-focused.
-- Coordinator should remain control-focused.
+- Orchestrator should remain control-focused.
 
 They may be co-located in early deployment, but the boundary should stay explicit in code and APIs.
 
-## Why Coordinator Is Not The MPC Node
+## Why Orchestrator Is Not The MPC Node
 
 `mpcium node` should remain a worker runtime.
 
-If every node also acts as coordinator, the system must solve duplicate orchestration, leader election, and split-brain. That adds control-plane complexity into the worker path and makes debugging much harder.
+If every node also acts as Orchestrator, the system must solve duplicate orchestration, leader election, and split-brain. That adds control-plane complexity into the worker path and makes debugging much harder.
 
-A separate coordinator runtime keeps:
+A separate Orchestrator runtime keeps:
 
 - one session authority
 - simpler workers
@@ -451,20 +451,20 @@ A separate coordinator runtime keeps:
 
 ## Open Questions
 
-- What is the external request interface for coordinator: HTTP, gRPC, or NATS request-reply?
+- What is the external request interface for Orchestrator: HTTP, gRPC, or NATS request-reply?
 - How long should pending session and pending control messages stay in relay mailbox?
 - Should `session.<sessionId>.event` live only on NATS, or also be mirrored to MQTT for external debugging and observability?
 - Do we need resumable session tokens for mobile reconnect flows?
-- How should coordinator persist session state: in-memory plus snapshot, Redis, Consul, or another store?
+- How should Orchestrator persist session state: in-memory plus snapshot, Redis, Consul, or another store?
 - Should key exchange use one derived pairwise key per peer pair for the whole session, or support key rotation per phase?
-- Do we want a dedicated event for delivery acknowledgment from relay to coordinator?
+- Do we want a dedicated event for delivery acknowledgment from relay to Orchestrator?
 
 ## Suggested Next Steps
 
-1. Finalize the coordinator request API.
+1. Finalize the Orchestrator request API.
 2. Define protobuf or JSON schemas for the envelope and message bodies in this document.
 3. Define relay presence and mailbox behavior in more detail.
-4. Implement the control-plane state machine in the coordinator runtime.
+4. Implement the control-plane state machine in the Orchestrator runtime.
 5. Implement the new topic namespace and transport bridge behavior.
 6. Integrate round 0 key exchange into the participant runtimes.
 
@@ -478,7 +478,7 @@ Even though `keygen` must happen before real `sign`, the first milestone should 
 
 Implement:
 
-- coordinator runtime skeleton
+- Orchestrator runtime skeleton
 - session store with in-memory state
 - request intake
 - participant selection
@@ -488,7 +488,7 @@ Implement:
 
 Deliverable:
 
-- coordinator can create a session and drive participants through `created -> waiting_participants -> ready`
+- orch can create a session and drive participants through `created -> waiting_participants -> ready`
 
 ### Phase 2: Relay Foundation
 
@@ -517,7 +517,7 @@ Implement:
 
 Deliverable:
 
-- coordinator can start a session and collect participant readiness from both internal and external peers
+- orch can start a session and collect participant readiness from both internal and external peers
 
 ### Phase 4: Round 0 Key Exchange
 
@@ -531,7 +531,7 @@ Implement:
 
 Deliverable:
 
-- all participants derive session keys and coordinator can transition a session into `active_mpc`
+- all participants derive session keys and orch can transition a session into `active_mpc`
 
 ### Phase 5: Generic P2P Transport
 

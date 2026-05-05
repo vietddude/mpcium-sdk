@@ -24,7 +24,7 @@ type Runtime struct {
 	relay       Relay
 	stores      Stores
 	identity    *localIdentity
-	coordLookup *coordinatorLookup
+	coordLookup *OrchestratorLookup
 
 	sessionsMu   sync.RWMutex
 	sessionOpsMu sync.Mutex
@@ -73,13 +73,13 @@ func NewRuntime(cfg Config, relay Relay, stores Stores) (*Runtime, error) {
 		_ = stores.Close()
 		return nil, err
 	}
-	coordinatorPub, err := cfg.CoordinatorPublicKeyBytes()
+	OrchestratorPub, err := cfg.OrchestratorPublicKeyBytes()
 	if err != nil {
 		relay.Close()
 		_ = stores.Close()
 		return nil, err
 	}
-	coordLookup, err := newCoordinatorLookup(cfg.CoordinatorID, coordinatorPub)
+	coordLookup, err := newOrchestratorLookup(cfg.OrchestratorID, OrchestratorPub)
 	if err != nil {
 		relay.Close()
 		_ = stores.Close()
@@ -368,7 +368,7 @@ func (r *Runtime) startSession(msg *protocol.ControlMessage) error {
 		LocalParticipantID: r.cfg.NodeID,
 		Identity:           r.identity,
 		Peers:              newPeerLookup(peerKeys),
-		Coordinator:        r.coordLookup,
+		Orchestrator:       r.coordLookup,
 		Preparams:          r.stores,
 		Shares:             r.stores,
 		SessionCheckpoint:  r.stores,
@@ -529,7 +529,7 @@ func (r *Runtime) dispatchActions(actions participant.Actions) error {
 }
 
 func (r *Runtime) verifyControlSignature(msg *protocol.ControlMessage) error {
-	publicKey, err := r.coordLookup.LookupCoordinator(msg.CoordinatorID)
+	publicKey, err := r.coordLookup.LookupOrchestrator(msg.OrchestratorID)
 	if err != nil {
 		return err
 	}

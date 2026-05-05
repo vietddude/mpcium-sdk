@@ -15,19 +15,19 @@ const (
 )
 
 type Config struct {
-	NodeID                     string
-	DataDir                    string
-	CoordinatorID              string
-	CoordinatorPublicKeyBase64 string
-	DBEncryptionKeyBase64      string
-	IdentityPrivateKeyBase64   string
-	Transport                  TransportConfig
-	Store                      StoreConfig
-	MQTT                       MQTTConfig
-	MaxActiveSessions          int
-	PresenceInterval           time.Duration
-	TickInterval               time.Duration
-	ApprovalTimeout            time.Duration
+	NodeID                      string
+	DataDir                     string
+	OrchestratorID              string
+	OrchestratorPublicKeyBase64 string
+	DBEncryptionKeyBase64       string
+	IdentityPrivateKeyBase64    string
+	Transport                   TransportConfig
+	Store                       StoreConfig
+	MQTT                        MQTTConfig
+	MaxActiveSessions           int
+	PresenceInterval            time.Duration
+	TickInterval                time.Duration
+	ApprovalTimeout             time.Duration
 }
 
 type TransportConfig struct {
@@ -53,8 +53,8 @@ type MQTTConfig struct {
 func (c *Config) applyDefaults() {
 	c.NodeID = strings.TrimSpace(c.NodeID)
 	c.DataDir = strings.TrimSpace(c.DataDir)
-	c.CoordinatorID = strings.TrimSpace(c.CoordinatorID)
-	c.CoordinatorPublicKeyBase64 = strings.TrimSpace(c.CoordinatorPublicKeyBase64)
+	c.OrchestratorID = strings.TrimSpace(c.OrchestratorID)
+	c.OrchestratorPublicKeyBase64 = strings.TrimSpace(c.OrchestratorPublicKeyBase64)
 	c.DBEncryptionKeyBase64 = strings.TrimSpace(c.DBEncryptionKeyBase64)
 	c.IdentityPrivateKeyBase64 = strings.TrimSpace(c.IdentityPrivateKeyBase64)
 	c.Transport.Mode = strings.TrimSpace(strings.ToLower(c.Transport.Mode))
@@ -90,11 +90,11 @@ func (c *Config) Validate() error {
 	if c.NodeID == "" {
 		return fmt.Errorf("node_id is required")
 	}
-	if c.CoordinatorID == "" {
-		return fmt.Errorf("coordinator_id is required")
+	if c.OrchestratorID == "" {
+		return fmt.Errorf("orchestrator_id is required")
 	}
-	if c.CoordinatorPublicKeyBase64 == "" {
-		return fmt.Errorf("coordinator_public_key_base64 is required")
+	if c.OrchestratorPublicKeyBase64 == "" {
+		return fmt.Errorf("orchestrator_public_key_base64 is required")
 	}
 	if c.Transport.Mode != TransportModeNative {
 		return fmt.Errorf("unsupported transport.mode %q", c.Transport.Mode)
@@ -105,10 +105,10 @@ func (c *Config) Validate() error {
 	return nil
 }
 
-func (c Config) CoordinatorPublicKeyBytes() ([]byte, error) {
-	decoded, err := base64.StdEncoding.DecodeString(c.CoordinatorPublicKeyBase64)
+func (c Config) OrchestratorPublicKeyBytes() ([]byte, error) {
+	decoded, err := base64.StdEncoding.DecodeString(c.OrchestratorPublicKeyBase64)
 	if err != nil {
-		return nil, fmt.Errorf("decode coordinator_public_key_base64: %w", err)
+		return nil, fmt.Errorf("decode orchestrator_public_key_base64: %w", err)
 	}
 	return decoded, nil
 }

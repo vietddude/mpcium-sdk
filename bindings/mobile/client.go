@@ -62,19 +62,19 @@ type Client struct {
 }
 
 type Config struct {
-	NodeID                     string          `json:"node_id"`
-	DataDir                    string          `json:"data_dir,omitempty"`
-	CoordinatorID              string          `json:"coordinator_id"`
-	CoordinatorPublicKeyBase64 string          `json:"coordinator_public_key_base64"`
-	DBEncryptionKeyBase64      string          `json:"db_encryption_key_base64,omitempty"`
-	IdentityPrivateKeyBase64   string          `json:"identity_private_key_base64,omitempty"`
-	Transport                  TransportConfig `json:"transport,omitempty"`
-	Store                      StoreConfig     `json:"store,omitempty"`
-	MQTT                       MQTTConfig      `json:"mqtt,omitempty"`
-	MaxActiveSessions          int             `json:"max_active_sessions,omitempty"`
-	PresenceIntervalMs         int64           `json:"presence_interval_ms,omitempty"`
-	TickIntervalMs             int64           `json:"tick_interval_ms,omitempty"`
-	ApprovalTimeoutMs          int64           `json:"approval_timeout_ms,omitempty"`
+	NodeID                      string          `json:"node_id"`
+	DataDir                     string          `json:"data_dir,omitempty"`
+	OrchestratorID              string          `json:"orchestrator_id"`
+	OrchestratorPublicKeyBase64 string          `json:"orchestrator_public_key_base64"`
+	DBEncryptionKeyBase64       string          `json:"db_encryption_key_base64,omitempty"`
+	IdentityPrivateKeyBase64    string          `json:"identity_private_key_base64,omitempty"`
+	Transport                   TransportConfig `json:"transport,omitempty"`
+	Store                       StoreConfig     `json:"store,omitempty"`
+	MQTT                        MQTTConfig      `json:"mqtt,omitempty"`
+	MaxActiveSessions           int             `json:"max_active_sessions,omitempty"`
+	PresenceIntervalMs          int64           `json:"presence_interval_ms,omitempty"`
+	TickIntervalMs              int64           `json:"tick_interval_ms,omitempty"`
+	ApprovalTimeoutMs           int64           `json:"approval_timeout_ms,omitempty"`
 }
 
 type TransportConfig struct {
@@ -120,12 +120,12 @@ func NewClient(configJSON string) (*Client, error) {
 	}
 
 	runtimeCfg := mobilecore.Config{
-		NodeID:                     cfg.NodeID,
-		DataDir:                    cfg.DataDir,
-		CoordinatorID:              cfg.CoordinatorID,
-		CoordinatorPublicKeyBase64: cfg.CoordinatorPublicKeyBase64,
-		DBEncryptionKeyBase64:      cfg.DBEncryptionKeyBase64,
-		IdentityPrivateKeyBase64:   cfg.IdentityPrivateKeyBase64,
+		NodeID:                      cfg.NodeID,
+		DataDir:                     cfg.DataDir,
+		OrchestratorID:              cfg.OrchestratorID,
+		OrchestratorPublicKeyBase64: cfg.OrchestratorPublicKeyBase64,
+		DBEncryptionKeyBase64:       cfg.DBEncryptionKeyBase64,
+		IdentityPrivateKeyBase64:    cfg.IdentityPrivateKeyBase64,
 		Transport: mobilecore.TransportConfig{
 			Mode: cfg.Transport.Mode,
 		},

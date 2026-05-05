@@ -12,8 +12,8 @@ import (
 )
 
 func TestHandleControlSignRequiresApproval(t *testing.T) {
-	rt, coordinatorPriv := newTestRuntime(t)
-	msg := newSignedSignStart(t, coordinatorPriv, rt.cfg.NodeID, rt.cfg.CoordinatorID, rt.identity.PublicKey())
+	rt, OrchestratorPriv := newTestRuntime(t)
+	msg := newSignedSignStart(t, OrchestratorPriv, rt.cfg.NodeID, rt.cfg.OrchestratorID, rt.identity.PublicKey())
 
 	raw, err := json.Marshal(msg)
 	if err != nil {
@@ -40,9 +40,9 @@ func TestHandleControlSignRequiresApproval(t *testing.T) {
 }
 
 func TestApproveSignRejectPublishesSessionFailed(t *testing.T) {
-	rt, coordinatorPriv := newTestRuntime(t)
+	rt, OrchestratorPriv := newTestRuntime(t)
 	relay := rt.relay.(*fakeRelay)
-	msg := newSignedSignStart(t, coordinatorPriv, rt.cfg.NodeID, rt.cfg.CoordinatorID, rt.identity.PublicKey())
+	msg := newSignedSignStart(t, OrchestratorPriv, rt.cfg.NodeID, rt.cfg.OrchestratorID, rt.identity.PublicKey())
 	raw, _ := json.Marshal(msg)
 	if err := rt.handleControl(raw); err != nil {
 		t.Fatalf("handleControl() error = %v", err)
@@ -66,9 +66,9 @@ func TestApproveSignRejectPublishesSessionFailed(t *testing.T) {
 }
 
 func TestApproveSignStartsSessionAndPublishesReadyEvents(t *testing.T) {
-	rt, coordinatorPriv := newTestRuntime(t)
+	rt, OrchestratorPriv := newTestRuntime(t)
 	relay := rt.relay.(*fakeRelay)
-	msg := newSignedSignStart(t, coordinatorPriv, rt.cfg.NodeID, rt.cfg.CoordinatorID, rt.identity.PublicKey())
+	msg := newSignedSignStart(t, OrchestratorPriv, rt.cfg.NodeID, rt.cfg.OrchestratorID, rt.identity.PublicKey())
 	raw, _ := json.Marshal(msg)
 	if err := rt.handleControl(raw); err != nil {
 		t.Fatalf("handleControl() error = %v", err)
@@ -87,8 +87,8 @@ func TestApproveSignStartsSessionAndPublishesReadyEvents(t *testing.T) {
 }
 
 func TestRestorePendingApprovalsEmitsApprovalEvent(t *testing.T) {
-	rt, coordinatorPriv := newTestRuntime(t)
-	msg := newSignedSignStart(t, coordinatorPriv, rt.cfg.NodeID, rt.cfg.CoordinatorID, rt.identity.PublicKey())
+	rt, OrchestratorPriv := newTestRuntime(t)
+	msg := newSignedSignStart(t, OrchestratorPriv, rt.cfg.NodeID, rt.cfg.OrchestratorID, rt.identity.PublicKey())
 	if err := rt.savePendingApproval(msg); err != nil {
 		t.Fatalf("savePendingApproval() error = %v", err)
 	}
@@ -122,9 +122,9 @@ func TestRestorePendingApprovalsEmitsApprovalEvent(t *testing.T) {
 
 func newTestRuntime(t *testing.T) (*Runtime, ed25519.PrivateKey) {
 	t.Helper()
-	coordinatorPub, coordinatorPriv, err := ed25519.GenerateKey(rand.Reader)
+	OrchestratorPub, OrchestratorPriv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
-		t.Fatalf("GenerateKey(coordinator) error = %v", err)
+		t.Fatalf("GenerateKey(orchestrator) error = %v", err)
 	}
 	localPub, localPriv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
@@ -134,15 +134,15 @@ func newTestRuntime(t *testing.T) (*Runtime, ed25519.PrivateKey) {
 	if err != nil {
 		t.Fatalf("newLocalIdentity() error = %v", err)
 	}
-	coordLookup, err := newCoordinatorLookup("coordinator-01", coordinatorPub)
+	coordLookup, err := newOrchestratorLookup("orch-01", OrchestratorPub)
 	if err != nil {
-		t.Fatalf("newCoordinatorLookup() error = %v", err)
+		t.Fatalf("newOrchestratorLookup() error = %v", err)
 	}
 	_ = localPub
 	return &Runtime{
 		cfg: Config{
 			NodeID:            "peer-mobile-01",
-			CoordinatorID:     "coordinator-01",
+			OrchestratorID:    "orch-01",
 			MaxActiveSessions: 5,
 			ApprovalTimeout:   DefaultApprovalTimeout,
 		},
@@ -154,19 +154,19 @@ func newTestRuntime(t *testing.T) (*Runtime, ed25519.PrivateKey) {
 		sessionMeta: map[string]string{},
 		sessionSeq:  map[string]uint64{},
 		pendingSign: map[string]pendingApproval{},
-	}, coordinatorPriv
+	}, OrchestratorPriv
 }
 
-func newSignedSignStart(t *testing.T, coordinatorPriv ed25519.PrivateKey, localID, coordinatorID string, localPub []byte) *protocol.ControlMessage {
+func newSignedSignStart(t *testing.T, OrchestratorPriv ed25519.PrivateKey, localID, OrchestratorID string, localPub []byte) *protocol.ControlMessage {
 	t.Helper()
 	peerPub, _, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatalf("GenerateKey(peer) error = %v", err)
 	}
 	msg := &protocol.ControlMessage{
-		SessionID:     "sess-sign-approval",
-		Sequence:      1,
-		CoordinatorID: coordinatorID,
+		SessionID:      "sess-sign-approval",
+		Sequence:       1,
+		OrchestratorID: OrchestratorID,
 		SessionStart: &protocol.SessionStart{
 			SessionID: "sess-sign-approval",
 			Protocol:  protocol.ProtocolTypeECDSA,
@@ -186,7 +186,7 @@ func newSignedSignStart(t *testing.T, coordinatorPriv ed25519.PrivateKey, localI
 	if err != nil {
 		t.Fatalf("ControlSigningBytes() error = %v", err)
 	}
-	msg.Signature = ed25519.Sign(coordinatorPriv, signingBytes)
+	msg.Signature = ed25519.Sign(OrchestratorPriv, signingBytes)
 	return msg
 }
 

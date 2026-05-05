@@ -47,7 +47,7 @@ const (
 
 // ParticipantPhase is the local lifecycle state of a participant within a
 // session. It is stamped on every outbound PeerMessage so peers and the
-// coordinator can reason about progress and ordering.
+// orch can reason about progress and ordering.
 type ParticipantPhase string
 
 const (
@@ -131,7 +131,7 @@ type ResharePayload struct {
 	NewParticipants []*SessionParticipant `json:"new_participants,omitempty"`
 }
 
-// SessionStart is the coordinator-authored message that defines a new MPC
+// SessionStart is the orchestrator-authored message that defines a new MPC
 // session: which protocol/operation, the threshold, and the participant
 // committee. Exactly one of Keygen/Sign/Reshare must be set to match
 // Operation. It is delivered inside a signed ControlMessage.
@@ -146,38 +146,38 @@ type SessionStart struct {
 	Reshare      *ResharePayload       `json:"reshare,omitempty"`
 }
 
-// KeyExchangeBegin is the coordinator command that tells participants to
+// KeyExchangeBegin is the orchestrator command that tells participants to
 // start an X25519 key exchange round under ExchangeID; peers then emit
 // KeyExchangeHello messages tagged with this ID.
 type KeyExchangeBegin struct {
 	ExchangeID string `json:"exchange_id"`
 }
 
-// MPCBegin is the coordinator command that tells participants to start
+// MPCBegin is the orchestrator command that tells participants to start
 // running tss-lib rounds. It must arrive after key exchange is complete;
 // otherwise the session fails with a missing-prerequisite error.
 type MPCBegin struct{}
 
-// SessionAbort is the coordinator command that terminates an in-flight
+// SessionAbort is the orchestrator command that terminates an in-flight
 // session with the given reason/detail.
 type SessionAbort struct {
 	Reason FailureReason `json:"reason"`
 	Detail string        `json:"detail,omitempty"`
 }
 
-// ControlMessage is the signed, coordinator-to-participant envelope that
+// ControlMessage is the signed, orchestrator-to-participant envelope that
 // drives a session forward. Exactly one body (SessionStart, KeyExchange,
 // MPCBegin, SessionAbort) is set per message; the transport must verify
-// Signature against the coordinator's identity key.
+// Signature against the Orchestrator's identity key.
 type ControlMessage struct {
-	SessionID     string            `json:"session_id"`
-	Sequence      uint64            `json:"sequence"`
-	CoordinatorID string            `json:"coordinator_id"`
-	Signature     []byte            `json:"signature,omitempty"`
-	SessionStart  *SessionStart     `json:"session_start,omitempty"`
-	KeyExchange   *KeyExchangeBegin `json:"key_exchange_begin,omitempty"`
-	MPCBegin      *MPCBegin         `json:"mpc_begin,omitempty"`
-	SessionAbort  *SessionAbort     `json:"session_abort,omitempty"`
+	SessionID      string            `json:"session_id"`
+	Sequence       uint64            `json:"sequence"`
+	OrchestratorID string            `json:"orchestrator_id"`
+	Signature      []byte            `json:"signature,omitempty"`
+	SessionStart   *SessionStart     `json:"session_start,omitempty"`
+	KeyExchange    *KeyExchangeBegin `json:"key_exchange_begin,omitempty"`
+	MPCBegin       *MPCBegin         `json:"mpc_begin,omitempty"`
+	SessionAbort   *SessionAbort     `json:"session_abort,omitempty"`
 }
 
 // KeyExchangeHello is the peer-to-peer X25519 public key advertisement
@@ -281,7 +281,7 @@ type SessionFailed struct {
 }
 
 // SessionEvent is the signed out-of-band notification emitted by a
-// participant to the coordinator/observers about lifecycle transitions
+// participant to the Orchestrator/observers about lifecycle transitions
 // and terminal results. Exactly one body field is set per event.
 type SessionEvent struct {
 	SessionID           string               `json:"session_id"`
@@ -318,7 +318,7 @@ const (
 
 // PresenceEvent is a transport-level liveness signal (online/offline)
 // published for a peer. It is not tied to any particular session and is
-// used by coordinators to pick reachable committees.
+// used by orchestrators to pick reachable committees.
 type PresenceEvent struct {
 	PeerID         string         `json:"peer_id"`
 	Status         PresenceStatus `json:"status"`
