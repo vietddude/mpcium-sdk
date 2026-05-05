@@ -40,8 +40,8 @@ class MainActivity : AppCompatActivity() {
     private val mqttClientId = "mobile-sample-01"
     private val mqttUsername = "mobile-sample-01"
     private val mqttPassword = "mobile-sample-01"
-    private val coordinatorId = "coordinator-01"
-    private val coordinatorPublicKey = "b64ca8ec459081a299aecc2b2b5d555265b15ddfd29e792ddd08bedb418bdd0d"
+    private val OrchestratorId = "orch-01"
+    private val OrchestratorPublicKey = "b64ca8ec459081a299aecc2b2b5d555265b15ddfd29e792ddd08bedb418bdd0d"
     private val mainHandler = Handler(Looper.getMainLooper())
     private val runtimeExecutor: ExecutorService = Executors.newSingleThreadExecutor()
     private val pollExecutor: ExecutorService = Executors.newSingleThreadExecutor()
@@ -301,8 +301,10 @@ class MainActivity : AppCompatActivity() {
     private fun runtimeConfigJson(): String =
         JSONObject()
             .put("node_id", mqttClientId)
-            .put("coordinator_id", coordinatorId)
-            .put("coordinator_public_key_base64", coordinatorPublicKeyBase64())
+            .put("coordinator_id", OrchestratorId)
+            .put("coordinator_public_key_base64", OrchestratorPublicKeyBase64())
+            .put("orchestrator_id", OrchestratorId)
+            .put("orchestrator_public_key_base64", OrchestratorPublicKeyBase64())
             .put("transport", JSONObject().put("mode", "native"))
             .put("store", JSONObject().put("mode", "native"))
             .put(
@@ -317,8 +319,8 @@ class MainActivity : AppCompatActivity() {
             .put("tick_interval_ms", 250)
             .toString()
 
-    private fun coordinatorPublicKeyBase64(): String {
-        val trimmed = coordinatorPublicKey.trim()
+    private fun OrchestratorPublicKeyBase64(): String {
+        val trimmed = OrchestratorPublicKey.trim()
         if (!trimmed.matches(Regex("^[0-9a-fA-F]{64}$"))) {
             return trimmed
         }

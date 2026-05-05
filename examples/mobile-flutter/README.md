@@ -2,11 +2,11 @@
 
 This sample runs the same gomobile Android runtime used by `examples/mobile-android`,
 but exposes it to Flutter through a thin Kotlin bridge. It also acts as a
-native Dart gRPC client for coordinator orchestration.
+native Dart gRPC client for Orchestrator orchestration.
 
 The app has three screens:
 
-- **Connect**: configure MQTT relay and coordinator gRPC endpoint, start the
+- **Connect**: configure MQTT relay and Orch gRPC endpoint, start the
   mobile MPC runtime, show/copy the mobile identity public key.
 - **Keygen**: submit a gRPC keygen request with threshold, protocol, wallet ID,
   peer participants, and the mobile participant auto-added from runtime identity.
@@ -22,11 +22,11 @@ The app has three screens:
 docker run --rm -p 1883:1883 eclipse-mosquitto:2 mosquitto -c /mosquitto-no-auth.conf
 ```
 
-3. Start your relay/coordinator stack. The Flutter app assumes:
+3. Start your relay/Orchestrator stack. The Flutter app assumes:
 
 ```text
 MQTT relay: tcp://10.0.2.2:1883
-Coordinator gRPC: 10.0.2.2:50051
+Orchestrator gRPC: 10.0.2.2:50051
 ```
 
 4. Build the gomobile AAR from the repository root:
@@ -82,12 +82,12 @@ talks to the runtime through:
 
 - `MethodChannel("mpcium_sdk")` for commands.
 - `EventChannel("mpcium_sdk/events")` for native log and runtime event batches.
-- Dart gRPC for coordinator orchestration.
+- Dart gRPC for Orchestrator orchestration.
 
-The MVP coordinator contract is in:
+The MVP Orchestrator contract must be sourced from `mpcium-orch`:
 
 ```text
-../../integrations/coordinator-grpc/proto/coordinator_orchestration.proto
+../../../mpcium-orch/proto/orch_orchestration.proto
 ```
 
 The current Dart gRPC shim in `lib/generated/` is hand-written because `protoc`
@@ -95,7 +95,7 @@ is not installed in this environment. When the server proto is finalized, replac
 those files with generated Dart output:
 
 ```bash
-protoc --dart_out=grpc:lib/generated -I ../../integrations/coordinator-grpc/proto ../../integrations/coordinator-grpc/proto/coordinator_orchestration.proto
+protoc --dart_out=grpc:lib/generated -I ../../../mpcium-orch/proto ../../../mpcium-orch/proto/orch_orchestration.proto
 ```
 
 If your shell does not have Flutter on `PATH`, call the SDK binary directly:

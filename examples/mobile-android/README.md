@@ -35,5 +35,5 @@ JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home" ./gradle
 
 - The emulator reaches the host MQTT broker at `tcp://10.0.2.2:1883`.
 - `MainActivity` registers native adapters, creates `mobile.Client`, starts the runtime, and polls runtime events.
-- The demo coordinator public key is fixed and only intended to satisfy runtime bootstrap validation.
+- The demo orchestrator public key is fixed and only intended to satisfy runtime bootstrap validation.
 - Adapter classes (`NativeTransportAdapter`, `NativeStoreAdapter`) implement the generated Go mobile facade interfaces.

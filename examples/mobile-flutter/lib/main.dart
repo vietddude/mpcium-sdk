@@ -16,14 +16,14 @@ const _defaultMqttBroker = 'tcp://10.0.2.2:1883';
 const _defaultNodeId = 'flutter-sample-01';
 const _defaultMqttUsername = _defaultNodeId;
 const _defaultMqttPassword = _defaultNodeId;
-const _defaultCoordinatorId = 'coordinator-01';
-const _defaultCoordinatorPublicKeyHex =
+const _defaultOrchestratorId = 'orch-01';
+const _defaultOrchestratorPublicKeyHex =
     'b64ca8ec459081a299aecc2b2b5d555265b15ddfd29e792ddd08bedb418bdd0d';
 const _defaultIdentityPrivateKeyHex =
     '666c75747465722d73616d706c652d30312d656432353531392d736565642121cad05e95eb9290a4255cf27cf22d269a3b0912e8b4055766e7b0dc5271b18a80';
 const _defaultPeerParticipants =
     'peer-node-01,56a47a1103b610d6c85bf23ddb1f78ff6404f7c6f170d46441a268e105873cc4\n'
-    'peer-node-02,d9034dd84e0dd10a57d6a09a8267b217051d5f121ff52fca66c2b485be16ae02';
+    'cosigner-aws,d9034dd84e0dd10a57d6a09a8267b217051d5f121ff52fca66c2b485be16ae02';
 
 class MpciumSampleApp extends StatelessWidget {
   const MpciumSampleApp({super.key});
@@ -86,9 +86,9 @@ class _RuntimePageState extends State<RuntimePage> {
   final _mqttUsername = TextEditingController(text: _defaultMqttUsername);
   final _mqttPassword = TextEditingController(text: _defaultMqttPassword);
   final _nodeId = TextEditingController(text: _defaultNodeId);
-  final _coordinatorId = TextEditingController(text: _defaultCoordinatorId);
-  final _coordinatorPublicKey = TextEditingController(
-    text: _defaultCoordinatorPublicKeyHex,
+  final _OrchestratorId = TextEditingController(text: _defaultOrchestratorId);
+  final _OrchestratorPublicKey = TextEditingController(
+    text: _defaultOrchestratorPublicKeyHex,
   );
   final _participants = TextEditingController(text: _defaultPeerParticipants);
   final _keygenWalletId = TextEditingController();
@@ -113,6 +113,7 @@ class _RuntimePageState extends State<RuntimePage> {
   bool _signPending = false;
   String? _pendingSignSessionId;
   String? _approvalDialogSessionId;
+  bool _approvalDialogScheduled = false;
 
   bool get _runtimeReady => _identity != null && _runtimeStarted;
 
@@ -133,8 +134,8 @@ class _RuntimePageState extends State<RuntimePage> {
     _mqttUsername.dispose();
     _mqttPassword.dispose();
     _nodeId.dispose();
-    _coordinatorId.dispose();
-    _coordinatorPublicKey.dispose();
+    _OrchestratorId.dispose();
+    _OrchestratorPublicKey.dispose();
     _participants.dispose();
     _keygenWalletId.dispose();
     _signWalletId.dispose();
@@ -181,7 +182,10 @@ class _RuntimePageState extends State<RuntimePage> {
     });
     try {
       final result =
-          await OrchestrationClient(endpoint: _grpcEndpoint.text).keygen(
+          await OrchestrationClient(
+            endpoint: _grpcEndpoint.text,
+            timeout: const Duration(seconds: 30),
+          ).keygen(
         KeygenInput(
           threshold: _threshold,
           walletId: walletId,
@@ -323,8 +327,11 @@ class _RuntimePageState extends State<RuntimePage> {
   String _runtimeConfigJson() {
     return jsonEncode(<String, Object?>{
       'node_id': _nodeId.text.trim(),
-      'coordinator_id': _coordinatorId.text.trim(),
-      'coordinator_public_key_base64': _hexToBase64(_coordinatorPublicKey.text),
+      // Backward-compatible keys for runtimes that still validate coordinator fields.
+      'coordinator_id': _OrchestratorId.text.trim(),
+      'coordinator_public_key_base64': _hexToBase64(_OrchestratorPublicKey.text),
+      'orchestrator_id': _OrchestratorId.text.trim(),
+      'orchestrator_public_key_base64': _hexToBase64(_OrchestratorPublicKey.text),
       // Keep sample participant identity stable across fresh installs.
       'identity_private_key_base64':
           _hexToBase64(_defaultIdentityPrivateKeyHex),
@@ -367,7 +374,7 @@ class _RuntimePageState extends State<RuntimePage> {
         setState(() {
           _pendingSignSessionId = sessionId;
         });
-        _showSignApprovalDialog(sessionId);
+        _scheduleSignApprovalDialog(sessionId);
       }
       if ((event.type == 'session_completed' ||
               event.type == 'session_failed') &&
@@ -383,11 +390,24 @@ class _RuntimePageState extends State<RuntimePage> {
     }
   }
 
+  void _scheduleSignApprovalDialog(String sessionId) {
+    if (_approvalDialogSessionId == sessionId || _approvalDialogScheduled) {
+      return;
+    }
+    _approvalDialogScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _approvalDialogScheduled = false;
+      if (!mounted || _pendingSignSessionId != sessionId) return;
+      _showSignApprovalDialog(sessionId);
+    });
+  }
+
   void _showSignApprovalDialog(String sessionId) {
     if (_approvalDialogSessionId == sessionId) return;
     _approvalDialogSessionId = sessionId;
     showDialog<void>(
       context: context,
+      useRootNavigator: true,
       builder: (BuildContext context) {
         return AlertDialog(
           title: const Text('Approve SIGN'),
@@ -440,6 +460,7 @@ class _RuntimePageState extends State<RuntimePage> {
       }
     });
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
       if (!_logScrollController.hasClients) return;
       _logScrollController.animateTo(
         _logScrollController.position.maxScrollExtent,
@@ -473,8 +494,8 @@ class _RuntimePageState extends State<RuntimePage> {
                 mqttUsername: _mqttUsername,
                 mqttPassword: _mqttPassword,
                 nodeId: _nodeId,
-                coordinatorId: _coordinatorId,
-                coordinatorPublicKey: _coordinatorPublicKey,
+                OrchestratorId: _OrchestratorId,
+                OrchestratorPublicKey: _OrchestratorPublicKey,
                 identity: _identity,
                 runtimeStarted: _runtimeStarted,
                 initializing: _initializing,
@@ -532,8 +553,8 @@ class _ConnectScreen extends StatelessWidget {
     required this.mqttUsername,
     required this.mqttPassword,
     required this.nodeId,
-    required this.coordinatorId,
-    required this.coordinatorPublicKey,
+    required this.OrchestratorId,
+    required this.OrchestratorPublicKey,
     required this.identity,
     required this.runtimeStarted,
     required this.initializing,
@@ -548,8 +569,8 @@ class _ConnectScreen extends StatelessWidget {
   final TextEditingController mqttUsername;
   final TextEditingController mqttPassword;
   final TextEditingController nodeId;
-  final TextEditingController coordinatorId;
-  final TextEditingController coordinatorPublicKey;
+  final TextEditingController OrchestratorId;
+  final TextEditingController OrchestratorPublicKey;
   final MpciumIdentity? identity;
   final bool runtimeStarted;
   final bool initializing;
@@ -569,7 +590,7 @@ class _ConnectScreen extends StatelessWidget {
             children: <Widget>[
               _Field(
                 controller: grpcEndpoint,
-                label: 'Coordinator gRPC endpoint',
+                label: 'Orch gRPC endpoint',
                 enabled: fieldsEnabled,
               ),
               const SizedBox(height: 10),
@@ -599,14 +620,14 @@ class _ConnectScreen extends StatelessWidget {
               ),
               const SizedBox(height: 10),
               _Field(
-                controller: coordinatorId,
-                label: 'Coordinator ID',
+                controller: OrchestratorId,
+                label: 'Orch ID',
                 enabled: fieldsEnabled,
               ),
               const SizedBox(height: 10),
               _Field(
-                controller: coordinatorPublicKey,
-                label: 'Coordinator public key hex',
+                controller: OrchestratorPublicKey,
+                label: 'Orch public key hex',
                 minLines: 2,
                 enabled: fieldsEnabled,
               ),
@@ -981,7 +1002,7 @@ class _PeerParticipantsEditor extends StatefulWidget {
 
 class _PeerParticipantsEditorState extends State<_PeerParticipantsEditor> {
   final List<_PeerParticipantFields> _peers = <_PeerParticipantFields>[];
-  bool _syncing = false;
+  int? _editingPeerIndex;
 
   @override
   void initState() {
@@ -993,14 +1014,13 @@ class _PeerParticipantsEditorState extends State<_PeerParticipantsEditor> {
   void didUpdateWidget(covariant _PeerParticipantsEditor oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.controller != widget.controller) {
-      _disposePeers();
+      _clearPeers();
       _loadFromController();
     }
   }
 
   @override
   void dispose() {
-    _disposePeers();
     super.dispose();
   }
 
@@ -1011,22 +1031,18 @@ class _PeerParticipantsEditorState extends State<_PeerParticipantsEditor> {
         .where((line) => line.isNotEmpty);
     for (final row in rows) {
       final parts = row.split(',');
-      _addPeer(
+      _peers.add(_PeerParticipantFields(
         id: parts.isNotEmpty ? parts[0].trim() : '',
         publicKey: parts.length > 1 ? parts[1].trim() : '',
-        sync: false,
-      );
+      ));
     }
     if (_peers.isEmpty) {
-      _addPeer(sync: false);
+      _peers.add(_PeerParticipantFields(id: 'peer-node-01'));
     }
     _syncController();
   }
 
-  void _disposePeers() {
-    for (final peer in _peers) {
-      peer.dispose();
-    }
+  void _clearPeers() {
     _peers.clear();
   }
 
@@ -1034,7 +1050,6 @@ class _PeerParticipantsEditorState extends State<_PeerParticipantsEditor> {
     final peer = _PeerParticipantFields(
       id: id ?? 'peer-node-${(_peers.length + 1).toString().padLeft(2, '0')}',
       publicKey: publicKey,
-      onChanged: _syncController,
     );
     setState(() {
       _peers.add(peer);
@@ -1044,8 +1059,13 @@ class _PeerParticipantsEditorState extends State<_PeerParticipantsEditor> {
 
   void _removePeer(int index) {
     if (_peers.length == 1) return;
-    final peer = _peers.removeAt(index);
-    peer.dispose();
+    _peers.removeAt(index);
+    if (_editingPeerIndex == index) {
+      _editingPeerIndex = null;
+    } else if (_editingPeerIndex case final editingIndex?
+        when editingIndex > index) {
+      _editingPeerIndex = editingIndex - 1;
+    }
     setState(() {});
     _syncController();
   }
@@ -1057,85 +1077,33 @@ class _PeerParticipantsEditorState extends State<_PeerParticipantsEditor> {
     _syncController();
   }
 
-  Future<void> _editPeer(int index) async {
-    final peer = _peers[index];
-    final id = TextEditingController(text: peer.id.text);
-    final publicKey = TextEditingController(text: peer.publicKey.text);
-    final action = await showDialog<_PeerEditAction>(
-      context: context,
-      builder: (context) {
-        return AlertDialog(
-          title: Text('Peer node ${index + 1}'),
-          content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: <Widget>[
-                _Field(controller: id, label: 'Node ID'),
-                const SizedBox(height: 10),
-                _Field(
-                  controller: publicKey,
-                  label: 'Identity public key hex',
-                  minLines: 2,
-                ),
-              ],
-            ),
-          ),
-          actions: <Widget>[
-            if (_peers.length > 1)
-              TextButton.icon(
-                onPressed: () =>
-                    Navigator.of(context).pop(_PeerEditAction.remove),
-                icon: const Icon(Icons.delete_outline),
-                label: const Text('Remove'),
-              ),
-            TextButton(
-              onPressed: () =>
-                  Navigator.of(context).pop(_PeerEditAction.cancel),
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.of(context).pop(_PeerEditAction.save),
-              child: const Text('Save'),
-            ),
-          ],
-        );
-      },
-    );
+  void _editPeer(int index) {
+    setState(() {
+      _editingPeerIndex = _editingPeerIndex == index ? null : index;
+    });
+  }
 
-    if (!mounted) return;
-    switch (action) {
-      case _PeerEditAction.save:
-        setState(() {
-          peer.id.text = id.text;
-          peer.publicKey.text = publicKey.text;
-        });
-        _syncController();
-        break;
-      case _PeerEditAction.remove:
-        _removePeer(index);
-        break;
-      case _PeerEditAction.cancel:
-      case null:
-        break;
-    }
-    id.dispose();
-    publicKey.dispose();
+  void _updatePeerId(int index, String value) {
+    _peers[index].id = value;
+    _syncController();
+  }
+
+  void _updatePeerPublicKey(int index, String value) {
+    _peers[index].publicKey = value;
+    _syncController();
   }
 
   void _syncController() {
-    if (_syncing) return;
-    _syncing = true;
     widget.controller.text = _peers
         .map((peer) {
           if (!peer.enabled) return '';
-          final id = peer.id.text.trim();
-          final publicKey = peer.publicKey.text.trim();
+          final id = peer.id.trim();
+          final publicKey = peer.publicKey.trim();
           if (id.isEmpty && publicKey.isEmpty) return '';
           return '$id,$publicKey';
         })
         .where((line) => line.isNotEmpty)
         .join('\n');
-    _syncing = false;
   }
 
   @override
@@ -1169,6 +1137,20 @@ class _PeerParticipantsEditorState extends State<_PeerParticipantsEditor> {
             onEnabledChanged: (value) => _setPeerEnabled(i, value),
             onTap: () => _editPeer(i),
           ),
+          if (_editingPeerIndex == i) ...<Widget>[
+            const SizedBox(height: 8),
+            _PeerParticipantInlineEditor(
+              key: ValueKey('peer-editor-$i'),
+              index: i,
+              fields: _peers[i],
+              canRemove: _peers.length > 1,
+              enabled: widget.enabled,
+              onIdChanged: (value) => _updatePeerId(i, value),
+              onPublicKeyChanged: (value) => _updatePeerPublicKey(i, value),
+              onRemove: () => _removePeer(i),
+              onDone: () => _editPeer(i),
+            ),
+          ],
           if (i != _peers.length - 1) const SizedBox(height: 8),
         ],
       ],
@@ -1178,23 +1160,13 @@ class _PeerParticipantsEditorState extends State<_PeerParticipantsEditor> {
 
 class _PeerParticipantFields {
   _PeerParticipantFields({
-    required String id,
-    required String publicKey,
-    required VoidCallback onChanged,
-  })  : id = TextEditingController(text: id),
-        publicKey = TextEditingController(text: publicKey) {
-    this.id.addListener(onChanged);
-    this.publicKey.addListener(onChanged);
-  }
+    required this.id,
+    this.publicKey = '',
+  });
 
-  final TextEditingController id;
-  final TextEditingController publicKey;
+  String id;
+  String publicKey;
   bool enabled = true;
-
-  void dispose() {
-    id.dispose();
-    publicKey.dispose();
-  }
 }
 
 class _SelfParticipantRow extends StatelessWidget {
@@ -1282,8 +1254,8 @@ class _PeerParticipantRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final nodeId = fields.id.text.trim();
-    final publicKey = fields.publicKey.text.trim();
+    final nodeId = fields.id.trim();
+    final publicKey = fields.publicKey.trim();
     final publicKeyPreview = publicKey.length <= 16
         ? publicKey
         : '${publicKey.substring(0, 10)}...${publicKey.substring(publicKey.length - 6)}';
@@ -1342,7 +1314,91 @@ class _PeerParticipantRow extends StatelessWidget {
   }
 }
 
-enum _PeerEditAction { save, remove, cancel }
+class _PeerParticipantInlineEditor extends StatelessWidget {
+  const _PeerParticipantInlineEditor({
+    super.key,
+    required this.index,
+    required this.fields,
+    required this.canRemove,
+    required this.enabled,
+    required this.onIdChanged,
+    required this.onPublicKeyChanged,
+    required this.onRemove,
+    required this.onDone,
+  });
+
+  final int index;
+  final _PeerParticipantFields fields;
+  final bool canRemove;
+  final bool enabled;
+  final ValueChanged<String> onIdChanged;
+  final ValueChanged<String> onPublicKeyChanged;
+  final VoidCallback onRemove;
+  final VoidCallback onDone;
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: const Color(0xfff4faf8),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: const Color(0xffdbe5e2)),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: <Widget>[
+            Text(
+              'Peer node ${index + 1}',
+              style: Theme.of(context).textTheme.labelLarge,
+            ),
+            const SizedBox(height: 10),
+            TextFormField(
+              initialValue: fields.id,
+              enabled: enabled,
+              autocorrect: false,
+              enableSuggestions: false,
+              style: const TextStyle(fontFamily: 'monospace'),
+              decoration: const InputDecoration(labelText: 'Node ID'),
+              onChanged: onIdChanged,
+            ),
+            const SizedBox(height: 10),
+            TextFormField(
+              initialValue: fields.publicKey,
+              enabled: enabled,
+              autocorrect: false,
+              enableSuggestions: false,
+              minLines: 2,
+              maxLines: 6,
+              style: const TextStyle(fontFamily: 'monospace'),
+              decoration:
+                  const InputDecoration(labelText: 'Identity public key hex'),
+              onChanged: onPublicKeyChanged,
+            ),
+            const SizedBox(height: 10),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: <Widget>[
+                if (canRemove)
+                  TextButton.icon(
+                    onPressed: enabled ? onRemove : null,
+                    icon: const Icon(Icons.delete_outline),
+                    label: const Text('Remove'),
+                  ),
+                const SizedBox(width: 8),
+                FilledButton(
+                  onPressed: onDone,
+                  child: const Text('Done'),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
 
 enum _ResultMode { keygen, sign }
 
@@ -1388,11 +1444,6 @@ class _ResultCard extends StatelessWidget {
                 if (result.keyId.isNotEmpty)
                   _CopyLine(
                       label: 'Key ID', value: result.keyId, onCopy: onCopy),
-                if (result.publicKeyHex.isNotEmpty)
-                  _CopyLine(
-                      label: 'Public key',
-                      value: result.publicKeyHex,
-                      onCopy: onCopy),
                 if (result.ecdsaPubkey.isNotEmpty)
                   _CopyLine(
                       label: 'ECDSA public key',
@@ -1425,7 +1476,7 @@ class _ResultCard extends StatelessWidget {
                     !result.completed &&
                     result.error.isEmpty)
                   Text(
-                    'Session accepted, waiting result returned no key or error.',
+                    'Session accepted, waiting for completion.',
                     style: Theme.of(context).textTheme.bodyMedium,
                   ),
               ],

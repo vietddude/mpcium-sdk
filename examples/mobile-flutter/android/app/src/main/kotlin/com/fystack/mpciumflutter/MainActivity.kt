@@ -25,7 +25,7 @@ class MainActivity : FlutterActivity(), EventChannel.StreamHandler {
         private const val DEFAULT_CLIENT_ID = "flutter-sample-01"
         private const val DEFAULT_USERNAME = "flutter-sample-01"
         private const val DEFAULT_PASSWORD = "flutter-sample-01"
-        private const val DEFAULT_COORDINATOR_ID = "coordinator-01"
+        private const val DEFAULT_ORCH_ID = "orch-01"
         private const val DEFAULT_COORDINATOR_PUBLIC_KEY =
             "b64ca8ec459081a299aecc2b2b5d555265b15ddfd29e792ddd08bedb418bdd0d"
         private const val DEFAULT_IDENTITY_PRIVATE_KEY_HEX =
@@ -216,6 +216,18 @@ class MainActivity : FlutterActivity(), EventChannel.StreamHandler {
                 if (type == "native_log") continue
                 val sessionId = event.optString("session_id")
                 val suffix = if (sessionId.isBlank()) "" else " session=$sessionId"
+                if (type == "runtime_error") {
+                    val message = event.optString("message")
+                    val errorCode = event.optString("error_code")
+                    val errorMessage = event.optString("error_message")
+                    val details = buildString {
+                        if (message.isNotBlank()) append(" message=$message")
+                        if (errorCode.isNotBlank()) append(" error_code=$errorCode")
+                        if (errorMessage.isNotBlank()) append(" error_message=$errorMessage")
+                    }
+                    Log.i(LOG_TAG, "event type=$type$suffix$details")
+                    continue
+                }
                 Log.i(LOG_TAG, "event type=$type$suffix")
             }
         } catch (t: Throwable) {
@@ -236,8 +248,10 @@ class MainActivity : FlutterActivity(), EventChannel.StreamHandler {
     private fun defaultRuntimeConfigJson(): String =
         JSONObject()
             .put("node_id", DEFAULT_CLIENT_ID)
-            .put("coordinator_id", DEFAULT_COORDINATOR_ID)
-            .put("coordinator_public_key_base64", coordinatorPublicKeyBase64())
+            .put("coordinator_id", DEFAULT_ORCH_ID)
+            .put("coordinator_public_key_base64", OrchestratorPublicKeyBase64())
+            .put("orchestrator_id", DEFAULT_ORCH_ID)
+            .put("orchestrator_public_key_base64", OrchestratorPublicKeyBase64())
             .put("identity_private_key_base64", hexToBase64(DEFAULT_IDENTITY_PRIVATE_KEY_HEX))
             .put("transport", JSONObject().put("mode", "native"))
             .put("store", JSONObject().put("mode", "native"))
@@ -253,7 +267,7 @@ class MainActivity : FlutterActivity(), EventChannel.StreamHandler {
             .put("tick_interval_ms", 250)
             .toString()
 
-    private fun coordinatorPublicKeyBase64(): String {
+    private fun OrchestratorPublicKeyBase64(): String {
         return hexToBase64(DEFAULT_COORDINATOR_PUBLIC_KEY)
     }
 

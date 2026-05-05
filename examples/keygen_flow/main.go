@@ -17,7 +17,7 @@ type queuedMessage struct {
 }
 
 func main() {
-	participants, coordinator, err := newTestParticipants(3)
+	participants, Orchestrator, err := newTestParticipants(3)
 	if err != nil {
 		log.Fatalf("newTestParticipants: %v", err)
 	}
@@ -35,8 +35,8 @@ func main() {
 		Keygen: &protocol.KeygenPayload{KeyID: "demo-wallet-key-1"},
 	}
 
-	sessions := createSessions(start, participants, coordinator)
-	results, err := driveKeygenFlow(start.SessionID, sessions, coordinator)
+	sessions := createSessions(start, participants, Orchestrator)
+	results, err := driveKeygenFlow(start.SessionID, sessions, Orchestrator)
 	if err != nil {
 		log.Fatalf("driveKeygenFlow: %v", err)
 	}
@@ -55,7 +55,7 @@ func main() {
 func driveKeygenFlow(
 	sessionID string,
 	sessions map[string]*participant.ParticipantSession,
-	coordinator coordinatorFixture,
+	Orchestrator OrchestratorFixture,
 ) (map[string]*participant.Result, error) {
 	pending := make([]queuedMessage, 0, 64)
 	results := make(map[string]*participant.Result, len(sessions))
@@ -70,12 +70,12 @@ func driveKeygenFlow(
 
 	for id, sess := range sessions {
 		ctrl := &protocol.ControlMessage{
-			SessionID:     sessionID,
-			Sequence:      1,
-			CoordinatorID: coordinator.id,
-			KeyExchange:   &protocol.KeyExchangeBegin{ExchangeID: "kx-demo-1"},
+			SessionID:      sessionID,
+			Sequence:       1,
+			OrchestratorID: Orchestrator.id,
+			KeyExchange:    &protocol.KeyExchangeBegin{ExchangeID: "kx-demo-1"},
 		}
-		if err := signControl(coordinator.priv, ctrl); err != nil {
+		if err := signControl(Orchestrator.priv, ctrl); err != nil {
 			return nil, err
 		}
 		effects, err := sess.HandleControl(ctrl)
@@ -91,12 +91,12 @@ func driveKeygenFlow(
 
 	for id, sess := range sessions {
 		ctrl := &protocol.ControlMessage{
-			SessionID:     sessionID,
-			Sequence:      2,
-			CoordinatorID: coordinator.id,
-			MPCBegin:      &protocol.MPCBegin{},
+			SessionID:      sessionID,
+			Sequence:       2,
+			OrchestratorID: Orchestrator.id,
+			MPCBegin:       &protocol.MPCBegin{},
 		}
-		if err := signControl(coordinator.priv, ctrl); err != nil {
+		if err := signControl(Orchestrator.priv, ctrl); err != nil {
 			return nil, err
 		}
 		effects, err := sess.HandleControl(ctrl)
@@ -194,7 +194,7 @@ func appendPending(queue []queuedMessage, sender string, messages []*protocol.Pe
 func createSessions(
 	start *protocol.SessionStart,
 	fixtures []participantFixture,
-	coordinator coordinatorFixture,
+	Orchestrator OrchestratorFixture,
 ) map[string]*participant.ParticipantSession {
 	sessions := make(map[string]*participant.ParticipantSession, len(fixtures))
 	for _, fixture := range fixtures {
@@ -203,7 +203,7 @@ func createSessions(
 			LocalParticipantID: fixture.id.id,
 			Identity:           fixture.id,
 			Peers:              fixture.lookup,
-			Coordinator:        coordinator.lookup,
+			Orchestrator:       Orchestrator.lookup,
 			Preparams:          fixture.preparams,
 			Shares:             fixture.shares,
 			SessionCheckpoint:  fixture.checkpoints,
@@ -233,19 +233,19 @@ type participantFixture struct {
 	checkpoints *memorySessionCheckpointStore
 }
 
-type coordinatorFixture struct {
+type OrchestratorFixture struct {
 	id     string
 	priv   ed25519.PrivateKey
-	lookup *testCoordinatorLookup
+	lookup *testOrchestratorLookup
 }
 
-func newTestParticipants(count int) ([]participantFixture, coordinatorFixture, error) {
+func newTestParticipants(count int) ([]participantFixture, OrchestratorFixture, error) {
 	peerLookup := &testPeerLookup{keys: make(map[string]ed25519.PublicKey, count)}
 	fixtures := make([]participantFixture, 0, count)
 	for i := 0; i < count; i++ {
 		pub, priv, err := ed25519.GenerateKey(rand.Reader)
 		if err != nil {
-			return nil, coordinatorFixture{}, err
+			return nil, OrchestratorFixture{}, err
 		}
 		identity := &testIdentity{id: fmt.Sprintf("peer-%d", i+1), pub: pub, priv: priv}
 		peerLookup.keys[identity.id] = pub
@@ -257,12 +257,12 @@ func newTestParticipants(count int) ([]participantFixture, coordinatorFixture, e
 			checkpoints: &memorySessionCheckpointStore{values: map[string][]byte{}},
 		})
 	}
-	coordinatorPub, coordinatorPriv, err := ed25519.GenerateKey(rand.Reader)
+	OrchestratorPub, OrchestratorPriv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
-		return nil, coordinatorFixture{}, err
+		return nil, OrchestratorFixture{}, err
 	}
-	coordinatorLookup := &testCoordinatorLookup{keys: map[string]ed25519.PublicKey{"coordinator-1": coordinatorPub}}
-	return fixtures, coordinatorFixture{id: "coordinator-1", priv: coordinatorPriv, lookup: coordinatorLookup}, nil
+	OrchestratorLookup := &testOrchestratorLookup{keys: map[string]ed25519.PublicKey{"orch-1": OrchestratorPub}}
+	return fixtures, OrchestratorFixture{id: "orch-1", priv: OrchestratorPriv, lookup: OrchestratorLookup}, nil
 }
 
 type testIdentity struct {
@@ -287,12 +287,12 @@ func (l *testPeerLookup) LookupParticipant(participantID string) (ed25519.Public
 	return key, nil
 }
 
-type testCoordinatorLookup struct{ keys map[string]ed25519.PublicKey }
+type testOrchestratorLookup struct{ keys map[string]ed25519.PublicKey }
 
-func (l *testCoordinatorLookup) LookupCoordinator(coordinatorID string) (ed25519.PublicKey, error) {
-	key, ok := l.keys[coordinatorID]
+func (l *testOrchestratorLookup) LookupOrchestrator(OrchestratorID string) (ed25519.PublicKey, error) {
+	key, ok := l.keys[OrchestratorID]
 	if !ok {
-		return nil, fmt.Errorf("coordinator %s not found", coordinatorID)
+		return nil, fmt.Errorf("orchestrator %s not found", OrchestratorID)
 	}
 	return key, nil
 }

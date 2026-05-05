@@ -1,7 +1,9 @@
+import 'dart:async';
+
 import 'package:grpc/grpc.dart';
 
-import 'generated/coordinator_orchestration.pb.dart' as pb;
-import 'generated/coordinator_orchestration.pbgrpc.dart';
+import 'generated/orch_orchestration.pb.dart' as pb;
+import 'generated/orch_orchestration.pbgrpc.dart';
 
 class OrchestrationClient {
   OrchestrationClient({
@@ -12,13 +14,13 @@ class OrchestrationClient {
 
   final String _endpoint;
   final Duration _timeout;
-  static const int _maxWaitAttempts = 3;
+  static const int _maxWaitAttempts = 1;
 
   Future<SessionResultView> keygen(KeygenInput input) async {
     final channel = _channel();
     late final pb.RequestAccepted accepted;
     try {
-      final client = CoordinatorOrchestrationClient(channel);
+      final client = OrchOrchestrationClient(channel);
       accepted = await client.keygen(
         pb.KeygenRequest(
           protocol: input.protocol.trim(),
@@ -38,7 +40,7 @@ class OrchestrationClient {
     final channel = _channel();
     late final pb.RequestAccepted accepted;
     try {
-      final client = CoordinatorOrchestrationClient(channel);
+      final client = OrchOrchestrationClient(channel);
       accepted = await client.sign(
         pb.SignRequest(
           protocol: input.protocol,
@@ -66,13 +68,18 @@ class OrchestrationClient {
     for (var attempt = 1; attempt <= _maxWaitAttempts; attempt++) {
       final channel = _channel();
       try {
-        final client = CoordinatorOrchestrationClient(channel);
+        final client = OrchOrchestrationClient(channel);
         final result = await client.waitSessionResult(
           pb.SessionLookup(sessionId: accepted.sessionId),
           options: CallOptions(timeout: _timeout),
         );
         return SessionResultView.fromProto(result, accepted: acceptedView);
       } on GrpcError catch (error) {
+        if (error.code == StatusCode.deadlineExceeded) {
+          throw TimeoutException(
+            'Session ${accepted.sessionId} timed out waiting for completion.',
+          );
+        }
         if (!_shouldRetryWait(error) || attempt == _maxWaitAttempts) {
           rethrow;
         }
@@ -180,9 +187,9 @@ class SignInput {
 class SessionResultView {
   const SessionResultView({
     required this.accepted,
+    required this.sessionCompleted,
     required this.sessionId,
     required this.keyId,
-    required this.publicKeyHex,
     required this.ecdsaPubkey,
     required this.eddsaPubkey,
     required this.signatureHex,
@@ -197,9 +204,9 @@ class SessionResultView {
   factory SessionResultView.fromAccepted(pb.RequestAccepted accepted) {
     return SessionResultView(
       accepted: accepted.accepted,
+      sessionCompleted: false,
       sessionId: accepted.sessionId,
       keyId: '',
-      publicKeyHex: '',
       ecdsaPubkey: '',
       eddsaPubkey: '',
       signatureHex: '',
@@ -215,9 +222,9 @@ class SessionResultView {
   factory SessionResultView.failure(Object error) {
     return SessionResultView(
       accepted: false,
+      sessionCompleted: false,
       sessionId: '',
       keyId: '',
-      publicKeyHex: '',
       ecdsaPubkey: '',
       eddsaPubkey: '',
       signatureHex: '',
@@ -234,7 +241,7 @@ class SessionResultView {
     pb.SessionResult result, {
     required SessionResultView accepted,
   }) {
-    final hasTerminalResult = result.publicKeyHex.isNotEmpty ||
+    final hasTerminalResult = result.keyId.isNotEmpty ||
         result.ecdsaPubkey.isNotEmpty ||
         result.eddsaPubkey.isNotEmpty ||
         result.signatureHex.isNotEmpty ||
@@ -242,10 +249,10 @@ class SessionResultView {
         result.signedInputHex.isNotEmpty;
     return SessionResultView(
       accepted: accepted.accepted || result.completed || hasTerminalResult,
+      sessionCompleted: result.completed,
       sessionId:
           result.sessionId.isEmpty ? accepted.sessionId : result.sessionId,
       keyId: result.keyId,
-      publicKeyHex: result.publicKeyHex,
       ecdsaPubkey: result.ecdsaPubkey,
       eddsaPubkey: result.eddsaPubkey,
       signatureHex: result.signatureHex,
@@ -259,9 +266,9 @@ class SessionResultView {
   }
 
   final bool accepted;
+  final bool sessionCompleted;
   final String sessionId;
   final String keyId;
-  final String publicKeyHex;
   final String ecdsaPubkey;
   final String eddsaPubkey;
   final String signatureHex;
@@ -274,11 +281,13 @@ class SessionResultView {
 
   bool get hasSignature => signatureHex.isNotEmpty || rHex.isNotEmpty;
   bool get hasKey =>
-      publicKeyHex.isNotEmpty ||
-      ecdsaPubkey.isNotEmpty ||
-      eddsaPubkey.isNotEmpty;
+      keyId.isNotEmpty || ecdsaPubkey.isNotEmpty || eddsaPubkey.isNotEmpty;
   bool get completed =>
-      hasKey || hasSignature || signedInputHex.isNotEmpty || error.isNotEmpty;
+      sessionCompleted ||
+      hasKey ||
+      hasSignature ||
+      signedInputHex.isNotEmpty ||
+      error.isNotEmpty;
 }
 
 String _joinError(String code, String message) {

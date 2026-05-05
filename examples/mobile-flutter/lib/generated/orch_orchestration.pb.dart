@@ -159,7 +159,6 @@ class SessionResult {
     this.completed = false,
     this.sessionId = '',
     this.keyId = '',
-    this.publicKeyHex = '',
     this.signatureHex = '',
     this.signatureRecoveryHex = '',
     this.rHex = '',
@@ -185,9 +184,6 @@ class SessionResult {
           break;
         case 3:
           value.keyId = reader.readString();
-          break;
-        case 4:
-          value.publicKeyHex = reader.readString();
           break;
         case 5:
           value.signatureHex = reader.readString();
@@ -227,7 +223,6 @@ class SessionResult {
   bool completed;
   String sessionId;
   String keyId;
-  String publicKeyHex;
   String signatureHex;
   String signatureRecoveryHex;
   String rHex;

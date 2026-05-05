@@ -1,29 +1,29 @@
 import 'package:grpc/grpc.dart' as grpc;
 
-import 'coordinator_orchestration.pb.dart' as pb;
+import 'orch_orchestration.pb.dart' as pb;
 
-class CoordinatorOrchestrationClient extends grpc.Client {
-  CoordinatorOrchestrationClient(
+class OrchOrchestrationClient extends grpc.Client {
+  OrchOrchestrationClient(
     super.channel, {
     super.options,
     super.interceptors,
   });
 
   static final _$keygen = grpc.ClientMethod<pb.KeygenRequest, pb.RequestAccepted>(
-    '/coordinator.v1.CoordinatorOrchestration/Keygen',
+    '/orch.v1.Orchestration/Keygen',
     (pb.KeygenRequest value) => value.writeToBuffer(),
     (List<int> value) => pb.RequestAccepted.fromBuffer(value),
   );
 
   static final _$sign = grpc.ClientMethod<pb.SignRequest, pb.RequestAccepted>(
-    '/coordinator.v1.CoordinatorOrchestration/Sign',
+    '/orch.v1.Orchestration/Sign',
     (pb.SignRequest value) => value.writeToBuffer(),
     (List<int> value) => pb.RequestAccepted.fromBuffer(value),
   );
 
   static final _$waitSessionResult =
       grpc.ClientMethod<pb.SessionLookup, pb.SessionResult>(
-    '/coordinator.v1.CoordinatorOrchestration/WaitSessionResult',
+    '/orch.v1.Orchestration/WaitSessionResult',
     (pb.SessionLookup value) => value.writeToBuffer(),
     (List<int> value) => pb.SessionResult.fromBuffer(value),
   );
