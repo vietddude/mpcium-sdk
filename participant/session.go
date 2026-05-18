@@ -213,14 +213,19 @@ func New(cfg Config) (*ParticipantSession, error) {
 	if cfg.LocalParticipantID == "" {
 		return nil, errors.New("participant: missing local participant id")
 	}
-	if _, err := protocol.FindParticipant(cfg.Start, cfg.LocalParticipantID); err != nil {
+	localParticipant, err := protocol.FindParticipant(cfg.Start, cfg.LocalParticipantID)
+	if err != nil {
 		return nil, err
 	}
+
 	if cfg.Identity == nil {
 		return nil, errors.New("participant: missing identity")
 	}
 	if cfg.Identity.ParticipantID() != cfg.LocalParticipantID {
 		return nil, fmt.Errorf("participant: identity mismatch: %s != %s", cfg.Identity.ParticipantID(), cfg.LocalParticipantID)
+	}
+	if !bytes.Equal(cfg.Identity.PublicKey(), localParticipant.IdentityPublicKey) {
+		return nil, fmt.Errorf("participant: identity public key mismatch for %s", cfg.LocalParticipantID)
 	}
 	if cfg.Peers == nil {
 		return nil, errors.New("participant: missing peer lookup")

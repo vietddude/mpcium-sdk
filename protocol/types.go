@@ -12,12 +12,16 @@ const (
 	ProtocolTypeUnspecified ProtocolType = "UNSPECIFIED"
 	ProtocolTypeECDSA       ProtocolType = "ECDSA"
 	ProtocolTypeEdDSA       ProtocolType = "EdDSA"
+	ProtocolTypeBoth        ProtocolType = "BOTH"
 )
 
 func NormalizeProtocol(protocol ProtocolType) ProtocolType {
 	value := strings.TrimSpace(string(protocol))
 	if value == "" {
 		return ProtocolTypeUnspecified
+	}
+	if strings.EqualFold(value, string(ProtocolTypeBoth)) {
+		return ProtocolTypeBoth
 	}
 	return ProtocolType(value)
 }
@@ -33,6 +37,10 @@ func IsConcreteProtocol(protocol ProtocolType) bool {
 	default:
 		return false
 	}
+}
+
+func IsDualProtocol(protocol ProtocolType) bool {
+	return NormalizeProtocol(protocol) == ProtocolTypeBoth
 }
 
 // OperationType identifies what a session is doing (keygen, signing, or reshare).
@@ -320,29 +328,11 @@ const (
 // published for a peer. It is not tied to any particular session and is
 // used by orchestrators to pick reachable committees.
 type PresenceEvent struct {
-	PeerID         string         `json:"peer_id"`
+	ParticipantID  string         `json:"participant_id"`
 	Status         PresenceStatus `json:"status"`
 	Transport      TransportType  `json:"transport"`
 	ConnectionID   string         `json:"connection_id,omitempty"`
 	LastSeenUnixMs int64          `json:"last_seen_unix_ms"`
-}
-
-// RequestAccepted is the response envelope a participant returns to
-// acknowledge an incoming request (e.g. a sign approval) and bind it to
-// a SessionID with an expiry.
-type RequestAccepted struct {
-	Accepted  bool   `json:"accepted"`
-	SessionID string `json:"session_id"`
-	ExpiresAt string `json:"expires_at"`
-}
-
-// RequestRejected is the response envelope a participant returns to
-// decline an incoming request, carrying a machine-readable ErrorCode and
-// a human-readable ErrorMessage.
-type RequestRejected struct {
-	Accepted     bool   `json:"accepted"`
-	ErrorCode    string `json:"error_code"`
-	ErrorMessage string `json:"error_message"`
 }
 
 func MarshalJSON(msg any) ([]byte, error) {

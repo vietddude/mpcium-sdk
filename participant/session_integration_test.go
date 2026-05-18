@@ -4,6 +4,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -155,6 +156,42 @@ func TestSessionRejectsMPCBeginBeforeKeyExchange(t *testing.T) {
 	ctrl.Signature = ed25519.Sign(Orchestrator.priv, protocol.MustControlSigningBytes(ctrl))
 	if _, err := session.HandleControl(ctrl); err != ErrKeyExchangeRequired {
 		t.Fatalf("HandleControl(MPCBegin) error = %v, want %v", err, ErrKeyExchangeRequired)
+	}
+}
+
+func TestNewRejectsLocalIdentityPublicKeyMismatch(t *testing.T) {
+	participants, Orchestrator, err := newTestParticipants(2)
+	if err != nil {
+		t.Fatalf("newTestParticipants() error = %v", err)
+	}
+	wrongPub, _, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("GenerateKey() error = %v", err)
+	}
+	start := &protocol.SessionStart{
+		SessionID: "session-key-mismatch",
+		Protocol:  protocol.ProtocolTypeEdDSA,
+		Operation: protocol.OperationTypeKeygen,
+		Threshold: 1,
+		Participants: []*protocol.SessionParticipant{
+			{ParticipantID: participants[0].id.ParticipantID(), PartyKey: []byte{1}, IdentityPublicKey: wrongPub},
+			{ParticipantID: participants[1].id.ParticipantID(), PartyKey: []byte{2}, IdentityPublicKey: participants[1].id.pub},
+		},
+		Keygen: &protocol.KeygenPayload{KeyID: "eddsa-key"},
+	}
+
+	_, err = New(Config{
+		Start:              start,
+		LocalParticipantID: participants[0].id.id,
+		Identity:           participants[0].id,
+		Peers:              participants[0].lookup,
+		Orchestrator:       Orchestrator.lookup,
+		Preparams:          participants[0].preparams,
+		Shares:             participants[0].shares,
+		SessionCheckpoint:  participants[0].checkpoints,
+	})
+	if err == nil || !strings.Contains(err.Error(), "identity public key mismatch") {
+		t.Fatalf("participant.New() error = %v, want identity public key mismatch", err)
 	}
 }
 

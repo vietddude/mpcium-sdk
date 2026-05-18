@@ -103,8 +103,8 @@ func TestProtocolHelpers(t *testing.T) {
 		{name: "unspecified", in: ProtocolTypeUnspecified, normalized: ProtocolTypeUnspecified, unspecified: true},
 		{name: "ecdsa", in: ProtocolTypeECDSA, normalized: ProtocolTypeECDSA, concrete: true},
 		{name: "eddsa", in: ProtocolTypeEdDSA, normalized: ProtocolTypeEdDSA, concrete: true},
-		{name: "both", in: ProtocolType("both"), normalized: ProtocolType("both")},
-		{name: "trimmed both", in: ProtocolType(" both "), normalized: ProtocolType("both")},
+		{name: "both", in: ProtocolType("both"), normalized: ProtocolTypeBoth},
+		{name: "trimmed both", in: ProtocolType(" both "), normalized: ProtocolTypeBoth},
 	}
 
 	for _, tt := range tests {
@@ -117,6 +117,9 @@ func TestProtocolHelpers(t *testing.T) {
 			}
 			if got := IsConcreteProtocol(tt.in); got != tt.concrete {
 				t.Fatalf("IsConcreteProtocol() = %v, want %v", got, tt.concrete)
+			}
+			if got := IsDualProtocol(tt.in); got != (tt.normalized == ProtocolTypeBoth) {
+				t.Fatalf("IsDualProtocol() = %v", got)
 			}
 		})
 	}
@@ -416,7 +419,7 @@ func TestValidatePresenceEvent(t *testing.T) {
 	t.Parallel()
 
 	valid := &PresenceEvent{
-		PeerID:         "peer-1",
+		ParticipantID:  "peer-1",
 		Status:         PresenceStatusOnline,
 		Transport:      TransportTypeNATS,
 		ConnectionID:   "conn-1",

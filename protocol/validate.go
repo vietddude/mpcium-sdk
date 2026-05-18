@@ -251,8 +251,8 @@ func ValidatePresenceEvent(msg *PresenceEvent) error {
 	if msg == nil {
 		return ErrNilMessage
 	}
-	if msg.PeerID == "" {
-		return fmt.Errorf("%w: peer_id", ErrInvalidPayload)
+	if msg.ParticipantID == "" {
+		return fmt.Errorf("%w: participant_id", ErrInvalidPayload)
 	}
 	if msg.Status != PresenceStatusOnline && msg.Status != PresenceStatusOffline {
 		return fmt.Errorf("%w: status", ErrInvalidPayload)

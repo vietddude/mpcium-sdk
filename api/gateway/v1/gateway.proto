@@ -1,0 +1,50 @@
+syntax = "proto3";
+
+package gateway.v1;
+
+option go_package = "github.com/fystack/mpcium-sdk/api/gateway/v1;gatewayv1";
+
+service CosignerGateway {
+  rpc Connect(stream CosignerEnvelope) returns (stream GatewayEnvelope);
+}
+
+service GatewayControl {
+  rpc DisconnectCosigner(DisconnectCosignerRequest) returns (DisconnectCosignerResponse);
+}
+
+enum EnvelopeKind {
+  ENVELOPE_KIND_UNSPECIFIED = 0;
+  ENVELOPE_KIND_CONTROL = 1;
+  ENVELOPE_KIND_P2P = 2;
+  ENVELOPE_KIND_SESSION_EVENT = 3;
+  ENVELOPE_KIND_PRESENCE = 4;
+}
+
+message CosignerEnvelope {
+  EnvelopeKind kind = 1;
+  string workspace_id = 2;
+  string cosigner_id = 3;
+  string participant_id = 4;
+  string session_id = 5;
+  bytes payload = 6;
+}
+
+message GatewayEnvelope {
+  EnvelopeKind kind = 1;
+  string workspace_id = 2;
+  string cosigner_id = 3;
+  string participant_id = 4;
+  string session_id = 5;
+  bytes payload = 6;
+}
+
+message DisconnectCosignerRequest {
+  string workspace_id = 1;
+  string cosigner_id = 2;
+  string reason = 3;
+}
+
+message DisconnectCosignerResponse {
+  bool disconnected = 1;
+  string participant_id = 2;
+}
