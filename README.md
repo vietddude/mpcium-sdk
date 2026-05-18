@@ -29,11 +29,40 @@ Current supported runtime flow:
 
 - `participant`: main SDK runtime
 - `protocol`: JSON contracts, validation, signing bytes
+- `api/gateway/v1`: external cosigner gateway gRPC stream contract
 - `internal/wirecrypto`: direct packet key exchange/encryption helpers
 - `identity`: identity lookup/signing interfaces
 - `storage`: share/preparams/session-checkpoint interfaces
-- `mobilecore`: mobile runtime core with native transport/store adapters
-- `mobile`: gomobile facade (JSON-first API)
+
+## Boundary
+
+This SDK owns shared participant runtime contracts, not service-specific
+orchestration APIs.
+
+Owned by SDK:
+
+- signed MPC runtime wire messages in `protocol`
+- participant runtime state machine in `participant`
+- host-provided identity/storage interfaces
+- external cosigner gateway stream API in `api/gateway/v1`
+
+Not owned by SDK:
+
+- orch client APIs such as keygen/sign request submission
+- orch request response envelopes such as accepted/rejected responses
+- Apex registry, cosigner revoke records, public key version records, or wallet
+  session storage models
+- service transport choices such as NATS subjects or HTTP routes
+- mobile app/runtime packaging; that now lives in `cosigner-mobile`
+
+If a type is needed because multiple participant runtimes must parse, validate,
+sign, or verify the same bytes, it belongs in SDK. If a type describes service
+admission, product state, storage, or backend client submission, it belongs in
+that service repo.
+
+Mobile-specific bindings and app runtime live in the sibling
+`cosigner-mobile` repo. Its gomobile module imports this SDK for the shared MPC
+runtime contracts.
 
 ## Minimal integration example
 
@@ -176,33 +205,7 @@ ECDSA keygen now requires a slot-based preparams store. The legacy single-cache 
   - `to_participant_id` must be empty
   - `nonce` must be empty
 
-## Mobile facade (gomobile)
-
-Public API:
-
-- `NewClient(configJSON string) (*Client, error)`
-- `Start() error`
-- `Stop() error`
-- `PollEvents(max int32) string`
-- `ApproveSign(sessionID string, approved bool, reason string) error`
-- `GetParticipantID() string`
-- `GetIdentityPublicKeyBase64() string`
-
-Adapter registration:
-
-- `RegisterTransportAdapter(adapter TransportAdapter) error`
-- `RegisterStoreAdapter(adapter StoreAdapter) error`
-
-Runtime event types:
-
-- `runtime_started`
-- `presence_online`
-- `sign_approval_required`
-- `session_completed`
-- `session_failed`
-- `runtime_error`
-
 ## Notes
 
 - `RESHARE` is not implemented yet.
-- iOS runtime integration is out of scope for current v1.
+- Mobile bindings and app integration live in `cosigner-mobile`.
