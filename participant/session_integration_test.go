@@ -9,6 +9,7 @@ import (
 	"time"
 
 	ecdsaKeygen "github.com/bnb-chain/tss-lib/v2/ecdsa/keygen"
+	"github.com/decred/dcrd/dcrec/edwards/v2"
 	"github.com/fystack/mpcium-sdk/protocol"
 )
 
@@ -53,6 +54,9 @@ func TestSessionECDSAKeygenAndSign(t *testing.T) {
 	for id, result := range keygenResults {
 		if result == nil || result.KeyShare == nil || len(result.KeyShare.ShareBlob) == 0 {
 			t.Fatalf("keygen result missing share blob for %s", id)
+		}
+		if got := len(result.KeyShare.PublicKey); got != 65 {
+			t.Fatalf("ecdsa public key len for %s = %d, want 65", id, got)
 		}
 	}
 
@@ -102,6 +106,12 @@ func TestSessionEdDSAKeygenAndSign(t *testing.T) {
 	for id, result := range keygenResults {
 		if result == nil || result.KeyShare == nil || len(result.KeyShare.ShareBlob) == 0 {
 			t.Fatalf("keygen result missing share blob for %s", id)
+		}
+		if got := len(result.KeyShare.PublicKey); got != ed25519.PublicKeySize {
+			t.Fatalf("eddsa public key len for %s = %d, want %d", id, got, ed25519.PublicKeySize)
+		}
+		if _, err := edwards.ParsePubKey(result.KeyShare.PublicKey); err != nil {
+			t.Fatalf("eddsa public key for %s is not compressed Ed25519: %v", id, err)
 		}
 	}
 

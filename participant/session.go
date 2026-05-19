@@ -778,7 +778,7 @@ func (s *ParticipantSession) completeEdDSAKeygen(data *eddsaKeygen.LocalPartySav
 	result := &Result{KeyShare: &protocol.KeyShareResult{
 		KeyID:     s.cfg.Start.Keygen.KeyID,
 		ShareBlob: shareBlob,
-		PublicKey: marshalECPoint(data.EDDSAPub),
+		PublicKey: marshalEd25519PublicKey(data.EDDSAPub),
 	}}
 	return s.complete(result), nil
 }
@@ -1075,6 +1075,21 @@ func marshalECPoint(point ecPoint) []byte {
 	point.X().FillBytes(publicKey[1 : 1+byteLen])
 	point.Y().FillBytes(publicKey[1+byteLen:])
 	return publicKey
+}
+
+func marshalEd25519PublicKey(point ecPoint) []byte {
+	if point == nil || point.X() == nil || point.Y() == nil {
+		return nil
+	}
+	out := make([]byte, ed25519.PublicKeySize)
+	y := point.Y().Bytes()
+	for i := 0; i < len(y) && i < ed25519.PublicKeySize; i++ {
+		out[i] = y[len(y)-1-i]
+	}
+	if point.X().Bit(0) == 1 {
+		out[ed25519.PublicKeySize-1] |= 0x80
+	}
+	return out
 }
 
 func cloneBytes(in []byte) []byte {

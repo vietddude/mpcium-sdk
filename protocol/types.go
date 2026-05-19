@@ -222,7 +222,9 @@ type PeerMessage struct {
 
 // KeyShareResult is the terminal output of a successful KEYGEN session:
 // the opaque local share blob (caller-encrypted at rest) and the joint
-// public key for the generated key.
+// public key for the generated key. ECDSA public keys are 65-byte
+// uncompressed secp256k1 points (04 || X(32) || Y(32)); EdDSA public keys
+// are 32-byte compressed Ed25519 public keys.
 type KeyShareResult struct {
 	KeyID     string `json:"key_id"`
 	ShareBlob []byte `json:"share_blob,omitempty"`
