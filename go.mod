@@ -4,6 +4,7 @@ go 1.26
 
 require (
 	github.com/bnb-chain/tss-lib/v2 v2.0.3
+	github.com/decred/dcrd/dcrec/edwards/v2 v2.0.3
 	golang.org/x/crypto v0.50.0
 	google.golang.org/grpc v1.81.1
 	google.golang.org/protobuf v1.36.11
@@ -15,7 +16,6 @@ require (
 	github.com/btcsuite/btcd/btcec/v2 v2.3.2 // indirect
 	github.com/btcsuite/btcd/chaincfg/chainhash v1.0.1 // indirect
 	github.com/btcsuite/btcutil v1.0.2 // indirect
-	github.com/decred/dcrd/dcrec/edwards/v2 v2.0.3 // indirect
 	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.0.1 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/hashicorp/errwrap v1.0.0 // indirect
