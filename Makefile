@@ -1,20 +1,10 @@
-.PHONY: test mobile-test mobile-android mobile-android-sample proto-tools proto
+.PHONY: test proto-tools proto
 
-ANDROID_API ?= 21
 ORCH_REPO_DIR ?= ../mpcium-orch
 ORCH_PROTO_REL_PATH ?= proto/orch_orchestration.proto
 
 test:
 	GOCACHE=$(CURDIR)/.gocache go test ./...
-
-mobile-test:
-	cd bindings/mobile && GOCACHE=$(CURDIR)/../../.gocache go test ./...
-
-mobile-android:
-	@ANDROID_MIN_API=$(ANDROID_API) ./scripts/build-mobile.sh
-
-mobile-android-sample:
-	cd examples/mobile-android && ./gradlew assembleDebug
 
 proto-tools:
 	go install google.golang.org/protobuf/cmd/protoc-gen-go@latest

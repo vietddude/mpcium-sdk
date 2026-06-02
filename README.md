@@ -64,6 +64,16 @@ Mobile-specific bindings and app runtime live in the sibling
 `cosigner-mobile` repo. Its gomobile module imports this SDK for the shared MPC
 runtime contracts.
 
+## Private module access
+
+For private GitHub modules in the same org, configure Go to skip the public
+module proxy and let Git rewrite HTTPS module fetches to SSH:
+
+```sh
+go env -w GOPRIVATE=github.com/fystack/*
+git config --global url."git@github.com:fystack/".insteadOf "https://github.com/fystack/"
+```
+
 ## Minimal integration example
 
 Below is a minimal orchestrator-to-participant integration skeleton.
