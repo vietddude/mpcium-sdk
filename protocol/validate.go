@@ -2,6 +2,7 @@ package protocol
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
@@ -27,6 +28,8 @@ var (
 	ErrParticipantNotInSession     = errors.New("protocol: participant not present in session")
 	ErrUnsupportedDerivationOnOp   = errors.New("protocol: derivation is unsupported for operation")
 	ErrUnsupportedDerivationOnAlgo = errors.New("protocol: derivation is unsupported for protocol")
+	ErrInvalidSigningContext       = errors.New("protocol: invalid signing context JSON")
+	ErrSigningContextTooLarge      = errors.New("protocol: signing context exceeds maximum size")
 )
 
 func ValidateSessionStart(start *SessionStart) error {
@@ -92,6 +95,12 @@ func ValidateSessionStart(start *SessionStart) error {
 	case OperationTypeSign:
 		if start.Sign == nil || start.Sign.KeyID == "" || len(start.Sign.SigningInput) == 0 {
 			return fmt.Errorf("%w: sign", ErrInvalidPayload)
+		}
+		if len(start.Sign.SigningContext) > MaxSigningContextBytes {
+			return ErrSigningContextTooLarge
+		}
+		if len(start.Sign.SigningContext) > 0 && !json.Valid(start.Sign.SigningContext) {
+			return ErrInvalidSigningContext
 		}
 		if start.Sign.Derivation != nil && start.Protocol == ProtocolTypeEdDSA {
 			return ErrUnsupportedDerivationOnAlgo

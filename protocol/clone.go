@@ -13,6 +13,7 @@ func CloneSessionStart(start *SessionStart) *SessionStart {
 	if start.Sign != nil {
 		sign := *start.Sign
 		sign.SigningInput = append([]byte(nil), start.Sign.SigningInput...)
+		sign.SigningContext = append([]byte(nil), start.Sign.SigningContext...)
 		if start.Sign.Derivation != nil {
 			derivation := *start.Sign.Derivation
 			derivation.Path = append([]uint32(nil), start.Sign.Derivation.Path...)

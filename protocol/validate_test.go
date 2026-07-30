@@ -71,6 +71,45 @@ func TestValidateSessionStart(t *testing.T) {
 			},
 			wantErr: ErrUnsupportedDerivationOnAlgo,
 		},
+		{
+			name: "valid signing context",
+			mutate: func(start *SessionStart) {
+				start.Operation = OperationTypeSign
+				start.Keygen = nil
+				start.Sign = &SignPayload{
+					KeyID:          "key-1",
+					SigningInput:   []byte("msg"),
+					SigningContext: []byte(`{"version":1,"tx":{"verified":true}}`),
+				}
+			},
+			wantErr: nil,
+		},
+		{
+			name: "invalid signing context json",
+			mutate: func(start *SessionStart) {
+				start.Operation = OperationTypeSign
+				start.Keygen = nil
+				start.Sign = &SignPayload{
+					KeyID:          "key-1",
+					SigningInput:   []byte("msg"),
+					SigningContext: []byte(`{"version":`),
+				}
+			},
+			wantErr: ErrInvalidSigningContext,
+		},
+		{
+			name: "oversized signing context",
+			mutate: func(start *SessionStart) {
+				start.Operation = OperationTypeSign
+				start.Keygen = nil
+				start.Sign = &SignPayload{
+					KeyID:          "key-1",
+					SigningInput:   []byte("msg"),
+					SigningContext: append([]byte(`{"value":"`), append(make([]byte, MaxSigningContextBytes), []byte(`"}`)...)...),
+				}
+			},
+			wantErr: ErrSigningContextTooLarge,
+		},
 	}
 
 	for _, tt := range tests {
@@ -138,6 +177,9 @@ func TestCloneSessionStartDeepCopiesWireFields(t *testing.T) {
 		Sign: &SignPayload{
 			KeyID:        "wallet-1",
 			SigningInput: []byte("message"),
+			SigningContext: []byte(
+				`{"version":1,"tx":{"verified":true}}`,
+			),
 			Derivation: &NonHardenedDerivation{
 				Path:  []uint32{1, 2},
 				Delta: []byte("delta"),
@@ -153,6 +195,7 @@ func TestCloneSessionStartDeepCopiesWireFields(t *testing.T) {
 	start.Participants[0].PartyKey[0] = 'X'
 	start.Participants[0].IdentityPublicKey[0] = 'Y'
 	start.Sign.SigningInput[0] = 'Z'
+	start.Sign.SigningContext[0] = '['
 	start.Sign.Derivation.Path[0] = 99
 	start.Sign.Derivation.Delta[0] = 'Q'
 
@@ -164,6 +207,9 @@ func TestCloneSessionStartDeepCopiesWireFields(t *testing.T) {
 	}
 	if string(cloned.Sign.SigningInput) != "message" {
 		t.Fatalf("signing input was not deep copied: %q", string(cloned.Sign.SigningInput))
+	}
+	if string(cloned.Sign.SigningContext) != `{"version":1,"tx":{"verified":true}}` {
+		t.Fatalf("signing context was not deep copied: %q", string(cloned.Sign.SigningContext))
 	}
 	if cloned.Sign.Derivation.Path[0] != 1 {
 		t.Fatalf("derivation path was not deep copied: %+v", cloned.Sign.Derivation.Path)
@@ -377,6 +423,42 @@ func TestSigningBytesDeterministic(t *testing.T) {
 	sig := ed25519.Sign(priv, first)
 	if !ed25519.Verify(pub, second, sig) {
 		t.Fatalf("Verify() returned false")
+	}
+}
+
+func TestControlSignatureCoversSigningContext(t *testing.T) {
+	t.Parallel()
+
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("GenerateKey() error = %v", err)
+	}
+	start := validSessionStart()
+	start.Operation = OperationTypeSign
+	start.Keygen = nil
+	start.Sign = &SignPayload{
+		KeyID:          "key-1",
+		SigningInput:   []byte("message"),
+		SigningContext: []byte(`{"version":1,"tx":{"verified":true}}`),
+	}
+	message := &ControlMessage{
+		SessionID:      start.SessionID,
+		OrchestratorID: "orch-1",
+		SessionStart:   start,
+	}
+	signedBytes, err := ControlSigningBytes(message)
+	if err != nil {
+		t.Fatalf("ControlSigningBytes() error = %v", err)
+	}
+	signature := ed25519.Sign(priv, signedBytes)
+
+	message.SessionStart.Sign.SigningContext = []byte(`{"version":1,"tx":{"verified":false}}`)
+	tamperedBytes, err := ControlSigningBytes(message)
+	if err != nil {
+		t.Fatalf("ControlSigningBytes() after tamper error = %v", err)
+	}
+	if ed25519.Verify(pub, tamperedBytes, signature) {
+		t.Fatal("signature remained valid after signing context tamper")
 	}
 }
 

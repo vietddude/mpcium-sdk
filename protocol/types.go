@@ -87,7 +87,12 @@ const (
 	FailureReasonAborted              FailureReason = "ABORTED"
 	FailureReasonTimeout              FailureReason = "TIMEOUT"
 	FailureReasonReplay               FailureReason = "REPLAY"
+	FailureReasonCallbackRejected     FailureReason = "CALLBACK_REJECTED"
 )
+
+// MaxSigningContextBytes bounds the coordinator-signed readable transaction
+// context carried with a signing session.
+const MaxSigningContextBytes = 64 << 10
 
 // SessionParticipant describes one party in an MPC session: its logical ID,
 // the tss-lib ordering token (PartyKey), and the ed25519 identity key used
@@ -123,11 +128,13 @@ type KeygenPayload struct {
 
 // SignPayload is the operation-specific body carried by SessionStart when
 // Operation == SIGN. It names the existing key to sign with, the bytes to
-// sign, and an optional non-hardened derivation (ECDSA only).
+// sign, an optional readable transaction context, and an optional
+// non-hardened derivation (ECDSA only).
 type SignPayload struct {
-	KeyID        string                 `json:"key_id"`
-	SigningInput []byte                 `json:"signing_input"`
-	Derivation   *NonHardenedDerivation `json:"derivation,omitempty"`
+	KeyID          string                 `json:"key_id"`
+	SigningInput   []byte                 `json:"signing_input"`
+	SigningContext json.RawMessage        `json:"signing_context,omitempty"`
+	Derivation     *NonHardenedDerivation `json:"derivation,omitempty"`
 }
 
 // ResharePayload is the operation-specific body carried by SessionStart
