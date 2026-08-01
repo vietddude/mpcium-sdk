@@ -65,5 +65,10 @@ func CloneProtocolResult(result *Result) *Result {
 		signature.PublicKey = append([]byte(nil), result.Signature.PublicKey...)
 		cloned.Signature = &signature
 	}
+	if result.Reshare != nil {
+		reshare := *result.Reshare
+		reshare.PublicKey = append([]byte(nil), result.Reshare.PublicKey...)
+		cloned.Reshare = &reshare
+	}
 	return &cloned
 }

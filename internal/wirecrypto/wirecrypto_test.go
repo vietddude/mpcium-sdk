@@ -19,6 +19,8 @@ func TestDirectEncryptionRoundTrip(t *testing.T) {
 	}
 
 	msg := validDirectMessage()
+	msg.MPCPacket.FromCommittee = protocol.CommitteeRoleOld
+	msg.MPCPacket.ToCommittee = protocol.CommitteeRoleNew
 	nonce, ciphertext, err := EncryptDirect(sender, recipient.PublicKeyBytes(), msg, []byte("payload"))
 	if err != nil {
 		t.Fatalf("EncryptDirect() error = %v", err)
@@ -88,6 +90,14 @@ func TestDirectEncryptionRejectsTamperAndAADMismatch(t *testing.T) {
 	mismatched.Sequence = 99
 	if _, err := DecryptDirect(recipient, sender.PublicKeyBytes(), mismatched, nonce, ciphertext); err == nil {
 		t.Fatalf("DecryptDirect() aad mismatch error = nil, want failure")
+	}
+
+	routeTampered := *msg
+	packet := *msg.MPCPacket
+	packet.ToCommittee = protocol.CommitteeRoleOld
+	routeTampered.MPCPacket = &packet
+	if _, err := DecryptDirect(recipient, sender.PublicKeyBytes(), &routeTampered, nonce, ciphertext); err == nil {
+		t.Fatal("DecryptDirect() accepted tampered committee route")
 	}
 }
 

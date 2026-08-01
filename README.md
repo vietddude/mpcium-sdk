@@ -8,13 +8,13 @@ Current supported runtime flow:
 2. Orchestrator sends `KeyExchangeBegin(exchange_id)`.
 3. Participants exchange signed `key_exchange_hello` messages.
 4. Orchestrator sends `MPCBegin`.
-5. SDK runs `keygen/sign` rounds via `tss-lib`.
+5. SDK runs `keygen/sign/reshare` rounds via `tss-lib`.
 6. Direct MPC packets are encrypted (E2E); broadcast packets are signed only.
 
 ## Features covered
 
 - Protocols: `ECDSA`, `EdDSA`
-- Operations: `KEYGEN`, `SIGN`
+- Operations: `KEYGEN`, `SIGN`, `RESHARE`
 - Participant session API:
   - `Start()`
   - `HandleControl(*protocol.ControlMessage)`
@@ -93,7 +93,7 @@ import (
 // - identity.LocalIdentity
 // - identity.PeerLookup
 // - identity.OrchestratorLookup
-// - storage.PreparamsStore / ShareStore / SessionCheckpointStore
+// - storage.PreparamsStore / ShareStore / ShareRotationStore / SessionCheckpointStore
 
 func runSession(
 	start *protocol.SessionStart,
@@ -184,6 +184,14 @@ The participant runtime expects this sequence:
 3. Exchange peer `KeyExchangeHello` until ready
 4. `MPCBegin`
 
+For `RESHARE`, successful TSS rounds emit `ResharePrepared` after the local
+replacement or retirement is durably staged. The signed `ReshareCommit`
+control promotes that rotation and only then emits `SessionCompleted`.
+`SessionAbort` before commit deletes the pending rotation and leaves the active
+share unchanged. A participant present in both committees runs separate OLD
+and NEW TSS parties; `MPCPacket.FromCommittee` and `ToCommittee` route packets
+to the correct local role.
+
 If `MPCBegin` arrives before key exchange is completed, the session fails with missing prerequisite.
 
 ## Preparams Slot Model
@@ -215,7 +223,11 @@ ECDSA keygen now requires a slot-based preparams store. The legacy single-cache 
   - `to_participant_id` must be empty
   - `nonce` must be empty
 
-## Notes
+## Reshare storage contract
 
-- `RESHARE` is not implemented yet.
+`participant.Config.ShareRotations` is required only for `RESHARE`.
+Implementations must make stage, commit, and abort durable and idempotent. A
+`storage.ShareRotation` contains exactly one of a replacement share (new and
+overlap participants) or retirement (old-only participants). Secret replacement
+bytes are never included in `ReshareResult` or relay events.
 - Mobile bindings and app integration live in `cosigner-mobile`.

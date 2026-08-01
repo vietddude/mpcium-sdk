@@ -66,9 +66,20 @@ const (
 	ParticipantPhaseKeyExchange     ParticipantPhase = "KEY_EXCHANGE"
 	ParticipantPhaseKeyExchangeDone ParticipantPhase = "KEY_EXCHANGE_DONE"
 	ParticipantPhaseMPCRunning      ParticipantPhase = "MPC_RUNNING"
+	ParticipantPhaseResharePrepared ParticipantPhase = "RESHARE_PREPARED"
 	ParticipantPhaseCompleted       ParticipantPhase = "COMPLETED"
 	ParticipantPhaseFailed          ParticipantPhase = "FAILED"
 	ParticipantPhaseAborted         ParticipantPhase = "ABORTED"
+)
+
+// CommitteeRole identifies which side of a reshare ceremony a TSS party
+// belongs to. It is left unspecified for keygen and signing packets.
+type CommitteeRole string
+
+const (
+	CommitteeRoleUnspecified CommitteeRole = "UNSPECIFIED"
+	CommitteeRoleOld         CommitteeRole = "OLD"
+	CommitteeRoleNew         CommitteeRole = "NEW"
 )
 
 // FailureReason categorises why a session or participant aborted/failed.
@@ -103,8 +114,9 @@ type SessionParticipant struct {
 	// It is NOT a cryptographic key. It is SHA-256'd with ParticipantID
 	// to derive the *big.Int used by tss.SortPartyIDs, so all parties
 	// agree on a deterministic round ordering. Must be non-empty,
-	// unique within a session, and stable across keygen/sign/reshare
-	// for the same logical participant. A safe choice is the
+	// unique within a committee, and stable for keygen/sign within one key
+	// generation. A reshare assigns a new PartyKey to every new-committee
+	// role, including overlapping participants. A safe initial choice is the
 	// participant's ed25519 public key bytes.
 	PartyKey          []byte `json:"party_key"`
 	IdentityPublicKey []byte `json:"identity_public_key,omitempty"`
@@ -180,6 +192,10 @@ type SessionAbort struct {
 	Detail string        `json:"detail,omitempty"`
 }
 
+// ReshareCommit promotes the share rotation previously staged by a
+// successful reshare ceremony. It is valid only after ResharePrepared.
+type ReshareCommit struct{}
+
 // ControlMessage is the signed, orchestrator-to-participant envelope that
 // drives a session forward. Exactly one body (SessionStart, KeyExchange,
 // MPCBegin, SessionAbort) is set per message; the transport must verify
@@ -192,6 +208,7 @@ type ControlMessage struct {
 	SessionStart   *SessionStart     `json:"session_start,omitempty"`
 	KeyExchange    *KeyExchangeBegin `json:"key_exchange_begin,omitempty"`
 	MPCBegin       *MPCBegin         `json:"mpc_begin,omitempty"`
+	ReshareCommit  *ReshareCommit    `json:"reshare_commit,omitempty"`
 	SessionAbort   *SessionAbort     `json:"session_abort,omitempty"`
 }
 
@@ -207,8 +224,10 @@ type KeyExchangeHello struct {
 // messages Payload is AEAD-encrypted and Nonce is required; for broadcast
 // messages Payload is plaintext-signed and Nonce must be empty.
 type MPCPacket struct {
-	Payload []byte `json:"payload"`
-	Nonce   []byte `json:"nonce,omitempty"`
+	Payload       []byte        `json:"payload"`
+	Nonce         []byte        `json:"nonce,omitempty"`
+	FromCommittee CommitteeRole `json:"from_committee,omitempty"`
+	ToCommittee   CommitteeRole `json:"to_committee,omitempty"`
 }
 
 // PeerMessage is the signed participant-to-participant envelope used for
@@ -252,12 +271,21 @@ type SignatureResult struct {
 	PublicKey         []byte `json:"public_key,omitempty"`
 }
 
+// ReshareResult is the public output of a successful share rotation. The
+// aggregate public key must be identical to the key being rotated.
+type ReshareResult struct {
+	KeyID        string `json:"key_id"`
+	PublicKey    []byte `json:"public_key,omitempty"`
+	NewThreshold uint32 `json:"new_threshold"`
+}
+
 // Result is the terminal session output handed back to the integrator.
 // Exactly one of KeyShare or Signature is set, matching the session's
 // Operation.
 type Result struct {
 	KeyShare  *KeyShareResult  `json:"key_share,omitempty"`
 	Signature *SignatureResult `json:"signature,omitempty"`
+	Reshare   *ReshareResult   `json:"reshare,omitempty"`
 }
 
 // PeerJoined notifies that a participant has joined the session.
@@ -290,6 +318,12 @@ type SessionCompleted struct {
 	Result *Result `json:"result,omitempty"`
 }
 
+// ResharePrepared reports that every local reshare role has finished and
+// the replacement/retirement has been durably staged, but not activated.
+type ResharePrepared struct {
+	Result *ReshareResult `json:"result,omitempty"`
+}
+
 // SessionFailed is the terminal event emitted when the session cannot
 // produce a result.
 type SessionFailed struct {
@@ -309,6 +343,7 @@ type SessionEvent struct {
 	PeerReady           *PeerReady           `json:"peer_ready,omitempty"`
 	PeerKeyExchangeDone *PeerKeyExchangeDone `json:"peer_key_exchange_done,omitempty"`
 	PeerFailed          *PeerFailed          `json:"peer_failed,omitempty"`
+	ResharePrepared     *ResharePrepared     `json:"reshare_prepared,omitempty"`
 	SessionCompleted    *SessionCompleted    `json:"session_completed,omitempty"`
 	SessionFailed       *SessionFailed       `json:"session_failed,omitempty"`
 }

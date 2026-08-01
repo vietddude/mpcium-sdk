@@ -2,6 +2,7 @@ package protocol
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -17,6 +18,9 @@ var (
 	ErrDuplicateParticipantID      = errors.New("protocol: duplicate participant_id")
 	ErrDuplicatePartyKey           = errors.New("protocol: duplicate party_key")
 	ErrDuplicateIdentityPublicKey  = errors.New("protocol: duplicate identity_public_key")
+	ErrReshareIdentityMismatch     = errors.New("protocol: reshare overlap identity mismatch")
+	ErrResharePartyKeyNotRotated   = errors.New("protocol: reshare overlap party_key must change")
+	ErrDuplicateDerivedPartyID     = errors.New("protocol: duplicate derived tss party id")
 	ErrInvalidThreshold            = errors.New("protocol: invalid threshold")
 	ErrInvalidPayload              = errors.New("protocol: invalid operation payload")
 	ErrMissingSignature            = errors.New("protocol: missing signature")
@@ -64,6 +68,9 @@ func ValidateSessionStart(start *SessionStart) error {
 		return nil
 	}
 	for _, p := range start.Participants {
+		if p == nil {
+			return fmt.Errorf("%w: nil participant", ErrInvalidPayload)
+		}
 		if p.ParticipantID == "" {
 			return ErrMissingParticipantID
 		}
@@ -112,10 +119,14 @@ func ValidateSessionStart(start *SessionStart) error {
 		if start.Reshare == nil || start.Reshare.KeyID == "" {
 			return fmt.Errorf("%w: reshare", ErrInvalidPayload)
 		}
-		if len(start.Reshare.NewParticipants) > 0 {
-			if err := validateParticipants(start.Reshare.NewParticipants, int(start.Reshare.NewThreshold)); err != nil {
-				return err
-			}
+		if len(start.Reshare.NewParticipants) == 0 {
+			return fmt.Errorf("%w: new participants", ErrInvalidPayload)
+		}
+		if err := validateParticipants(start.Reshare.NewParticipants, int(start.Reshare.NewThreshold)); err != nil {
+			return err
+		}
+		if err := validateReshareCommittees(start.Participants, start.Reshare.NewParticipants); err != nil {
+			return err
 		}
 		if start.Keygen != nil || start.Sign != nil {
 			return fmt.Errorf("%w: reshare body collision", ErrInvalidPayload)
@@ -158,6 +169,9 @@ func ValidateControlMessage(msg *ControlMessage) error {
 		}
 	}
 	if msg.MPCBegin != nil {
+		bodyCount++
+	}
+	if msg.ReshareCommit != nil {
 		bodyCount++
 	}
 	if msg.SessionAbort != nil {
@@ -210,6 +224,14 @@ func ValidatePeerMessage(msg *PeerMessage) error {
 		if len(msg.MPCPacket.Nonce) == 0 {
 			return fmt.Errorf("%w: direct packet missing nonce", ErrInvalidRouting)
 		}
+		fromSet := committeeRoleSet(msg.MPCPacket.FromCommittee)
+		toSet := committeeRoleSet(msg.MPCPacket.ToCommittee)
+		if fromSet != toSet {
+			return fmt.Errorf("%w: committee roles must be paired", ErrInvalidRouting)
+		}
+		if !validCommitteeRole(msg.MPCPacket.FromCommittee) || !validCommitteeRole(msg.MPCPacket.ToCommittee) {
+			return fmt.Errorf("%w: invalid committee role", ErrInvalidRouting)
+		}
 	}
 	if bodyCount != 1 {
 		return ErrInvalidPeerMessageBody
@@ -244,6 +266,12 @@ func ValidateSessionEvent(msg *SessionEvent) error {
 	if msg.PeerFailed != nil {
 		bodyCount++
 	}
+	if msg.ResharePrepared != nil {
+		bodyCount++
+		if msg.ResharePrepared.Result == nil || validateReshareResult(msg.ResharePrepared.Result) != nil {
+			return ErrInvalidSessionEventBody
+		}
+	}
 	if msg.SessionCompleted != nil {
 		bodyCount++
 	}
@@ -252,6 +280,71 @@ func ValidateSessionEvent(msg *SessionEvent) error {
 	}
 	if bodyCount != 1 {
 		return ErrInvalidSessionEventBody
+	}
+	return nil
+}
+
+func validateReshareCommittees(oldParticipants, newParticipants []*SessionParticipant) error {
+	oldByID := make(map[string]*SessionParticipant, len(oldParticipants))
+	derived := make(map[[sha256.Size]byte]string, len(oldParticipants)+len(newParticipants))
+	identities := make(map[string]string, len(oldParticipants)+len(newParticipants))
+	add := func(role CommitteeRole, participant *SessionParticipant) error {
+		derivedID := derivedPartyID(participant)
+		label := string(role) + ":" + participant.ParticipantID
+		if previous, ok := derived[derivedID]; ok {
+			return fmt.Errorf("%w: %s and %s", ErrDuplicateDerivedPartyID, previous, label)
+		}
+		derived[derivedID] = label
+		identity := string(participant.IdentityPublicKey)
+		if previous, ok := identities[identity]; ok && previous != participant.ParticipantID {
+			return fmt.Errorf("%w: %s", ErrDuplicateIdentityPublicKey, participant.ParticipantID)
+		}
+		identities[identity] = participant.ParticipantID
+		return nil
+	}
+	for _, participant := range oldParticipants {
+		oldByID[participant.ParticipantID] = participant
+		if err := add(CommitteeRoleOld, participant); err != nil {
+			return err
+		}
+	}
+	for _, participant := range newParticipants {
+		if oldParticipant, ok := oldByID[participant.ParticipantID]; ok {
+			if !bytes.Equal(oldParticipant.IdentityPublicKey, participant.IdentityPublicKey) {
+				return fmt.Errorf("%w: %s", ErrReshareIdentityMismatch, participant.ParticipantID)
+			}
+			if bytes.Equal(oldParticipant.PartyKey, participant.PartyKey) {
+				return fmt.Errorf("%w: %s", ErrResharePartyKeyNotRotated, participant.ParticipantID)
+			}
+		}
+		if err := add(CommitteeRoleNew, participant); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func derivedPartyID(participant *SessionParticipant) [sha256.Size]byte {
+	hasher := sha256.New()
+	_, _ = hasher.Write([]byte(participant.ParticipantID))
+	_, _ = hasher.Write([]byte{0})
+	_, _ = hasher.Write(participant.PartyKey)
+	var out [sha256.Size]byte
+	copy(out[:], hasher.Sum(nil))
+	return out
+}
+
+func validCommitteeRole(role CommitteeRole) bool {
+	return role == "" || role == CommitteeRoleUnspecified || role == CommitteeRoleOld || role == CommitteeRoleNew
+}
+
+func committeeRoleSet(role CommitteeRole) bool {
+	return role != "" && role != CommitteeRoleUnspecified
+}
+
+func validateReshareResult(result *ReshareResult) error {
+	if result == nil || result.KeyID == "" || len(result.PublicKey) == 0 || result.NewThreshold == 0 {
+		return ErrInvalidPayload
 	}
 	return nil
 }
@@ -293,6 +386,13 @@ func FindParticipant(start *SessionStart, participantID string) (*SessionPartici
 	for _, participant := range start.Participants {
 		if participant.ParticipantID == participantID {
 			return participant, nil
+		}
+	}
+	if start.Operation == OperationTypeReshare && start.Reshare != nil {
+		for _, participant := range start.Reshare.NewParticipants {
+			if participant.ParticipantID == participantID {
+				return participant, nil
+			}
 		}
 	}
 	return nil, fmt.Errorf("%w: %s", ErrParticipantNotInSession, participantID)

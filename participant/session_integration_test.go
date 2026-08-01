@@ -1,8 +1,10 @@
 package participant
 
 import (
+	"bytes"
 	"crypto/ed25519"
 	"crypto/rand"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -11,6 +13,7 @@ import (
 	ecdsaKeygen "github.com/bnb-chain/tss-lib/v2/ecdsa/keygen"
 	"github.com/decred/dcrd/dcrec/edwards/v2"
 	"github.com/fystack/mpcium-sdk/protocol"
+	"github.com/fystack/mpcium-sdk/storage"
 )
 
 func TestSessionECDSAKeygenAndSign(t *testing.T) {
@@ -137,6 +140,221 @@ func TestSessionEdDSAKeygenAndSign(t *testing.T) {
 	}
 }
 
+func TestSessionReshareAndSignWithNewCommittee(t *testing.T) {
+	for _, protocolType := range []protocol.ProtocolType{protocol.ProtocolTypeECDSA, protocol.ProtocolTypeEdDSA} {
+		protocolType := protocolType
+		t.Run(string(protocolType), func(t *testing.T) {
+			testSessionReshareAndSignWithNewCommittee(t, protocolType)
+		})
+	}
+}
+
+func testSessionReshareAndSignWithNewCommittee(t *testing.T, protocolType protocol.ProtocolType) {
+	t.Helper()
+	participants, Orchestrator, err := newTestParticipants(4)
+	if err != nil {
+		t.Fatalf("newTestParticipants() error = %v", err)
+	}
+	keyID := strings.ToLower(string(protocolType)) + "-reshare-key"
+	oldCommittee := []*protocol.SessionParticipant{
+		{ParticipantID: participants[0].id.ParticipantID(), PartyKey: []byte("old-1"), IdentityPublicKey: participants[0].id.pub},
+		{ParticipantID: participants[1].id.ParticipantID(), PartyKey: []byte("old-2"), IdentityPublicKey: participants[1].id.pub},
+		{ParticipantID: participants[2].id.ParticipantID(), PartyKey: []byte("old-3"), IdentityPublicKey: participants[2].id.pub},
+	}
+	newCommittee := []*protocol.SessionParticipant{
+		{ParticipantID: participants[1].id.ParticipantID(), PartyKey: []byte("new-2"), IdentityPublicKey: participants[1].id.pub},
+		{ParticipantID: participants[2].id.ParticipantID(), PartyKey: []byte("new-3"), IdentityPublicKey: participants[2].id.pub},
+		{ParticipantID: participants[3].id.ParticipantID(), PartyKey: []byte("new-4"), IdentityPublicKey: participants[3].id.pub},
+	}
+
+	if protocolType == protocol.ProtocolTypeECDSA {
+		fixtureKeys, _, fixtureErr := ecdsaKeygen.LoadKeygenTestFixtures(4)
+		if fixtureErr != nil {
+			t.Fatalf("LoadKeygenTestFixtures() error = %v", fixtureErr)
+		}
+		for i := range participants {
+			blob, encodeErr := encodeECDSAPreparams(&fixtureKeys[i].LocalPreParams)
+			if encodeErr != nil {
+				t.Fatalf("encodeECDSAPreparams() error = %v", encodeErr)
+			}
+			if err := participants[i].preparams.SavePreparamsSlot(protocolType, "bootstrap", blob); err != nil {
+				t.Fatalf("SavePreparamsSlot() error = %v", err)
+			}
+			if err := participants[i].preparams.SaveActivePreparamsSlot(protocolType, "bootstrap"); err != nil {
+				t.Fatalf("SaveActivePreparamsSlot() error = %v", err)
+			}
+		}
+	}
+
+	keygenStart := &protocol.SessionStart{
+		SessionID:    "session-" + strings.ToLower(string(protocolType)) + "-reshare-keygen",
+		Protocol:     protocolType,
+		Operation:    protocol.OperationTypeKeygen,
+		Threshold:    1,
+		Participants: oldCommittee,
+		Keygen:       &protocol.KeygenPayload{KeyID: keyID},
+	}
+	keygenSessions := createSessions(t, keygenStart, participants[:3], Orchestrator)
+	keygenResults := driveSession(t, keygenStart.SessionID, keygenSessions, Orchestrator)
+	originalPublicKey := cloneBytes(keygenResults[participants[0].id.id].KeyShare.PublicKey)
+
+	activeBefore := make(map[string][]byte, len(participants))
+	for i := range participants {
+		activeBefore[participants[i].id.id], err = participants[i].shares.LoadShare(protocolType, keyID)
+		if err != nil {
+			t.Fatalf("LoadShare(before) error = %v", err)
+		}
+	}
+
+	reshareStart := &protocol.SessionStart{
+		SessionID:    "session-" + strings.ToLower(string(protocolType)) + "-reshare",
+		Protocol:     protocolType,
+		Operation:    protocol.OperationTypeReshare,
+		Threshold:    1,
+		Participants: oldCommittee,
+		Reshare: &protocol.ResharePayload{
+			KeyID:           keyID,
+			NewThreshold:    2,
+			NewParticipants: newCommittee,
+		},
+	}
+	reshareSessions := createSessions(t, reshareStart, participants, Orchestrator)
+	driveReshareToPrepared(t, reshareStart.SessionID, reshareSessions, Orchestrator)
+
+	for i := range participants {
+		participantID := participants[i].id.id
+		if phase := reshareSessions[participantID].Status().Phase; phase != protocol.ParticipantPhaseResharePrepared {
+			t.Fatalf("phase for %s = %s, want %s", participantID, phase, protocol.ParticipantPhaseResharePrepared)
+		}
+		active, loadErr := participants[i].shares.LoadShare(protocolType, keyID)
+		if loadErr != nil {
+			t.Fatalf("LoadShare(prepared) error = %v", loadErr)
+		}
+		if !bytes.Equal(active, activeBefore[participantID]) {
+			t.Fatalf("active share changed before commit for %s", participantID)
+		}
+	}
+
+	// Recreate a prepared new-only participant from its durable checkpoint;
+	// it must still be able to accept the commit without rerunning TSS.
+	restarted, err := New(Config{
+		Start:              reshareStart,
+		LocalParticipantID: participants[3].id.id,
+		Identity:           participants[3].id,
+		Peers:              participants[3].lookup,
+		Orchestrator:       Orchestrator.lookup,
+		Preparams:          participants[3].preparams,
+		Shares:             participants[3].shares,
+		ShareRotations:     participants[3].rotations,
+		SessionCheckpoint:  participants[3].checkpoints,
+	})
+	if err != nil {
+		t.Fatalf("New(restarted prepared participant) error = %v", err)
+	}
+	if phase := restarted.Status().Phase; phase != protocol.ParticipantPhaseResharePrepared {
+		t.Fatalf("restarted phase = %s, want %s", phase, protocol.ParticipantPhaseResharePrepared)
+	}
+	reshareSessions[participants[3].id.id] = restarted
+
+	for id, session := range reshareSessions {
+		commit := signedControl(reshareStart.SessionID, 3, Orchestrator, func(message *protocol.ControlMessage) {
+			message.ReshareCommit = &protocol.ReshareCommit{}
+		})
+		effects, err := session.HandleControl(commit)
+		if err != nil {
+			t.Fatalf("HandleControl(ReshareCommit) for %s error = %v", id, err)
+		}
+		if effects.Result == nil || effects.Result.Reshare == nil {
+			t.Fatalf("reshare commit result missing for %s", id)
+		}
+		if !bytes.Equal(effects.Result.Reshare.PublicKey, originalPublicKey) {
+			t.Fatalf("public key changed for %s", id)
+		}
+	}
+
+	retired, err := participants[0].shares.LoadShare(protocolType, keyID)
+	if err != nil {
+		t.Fatalf("LoadShare(retired) error = %v", err)
+	}
+	if len(retired) != 0 {
+		t.Fatal("old-only participant share was not retired")
+	}
+	for _, index := range []int{1, 2, 3} {
+		active, loadErr := participants[index].shares.LoadShare(protocolType, keyID)
+		if loadErr != nil {
+			t.Fatalf("LoadShare(committed) error = %v", loadErr)
+		}
+		if len(active) == 0 || bytes.Equal(active, activeBefore[participants[index].id.id]) {
+			t.Fatalf("new share was not activated for %s", participants[index].id.id)
+		}
+	}
+
+	duplicateCommit := signedControl(reshareStart.SessionID, 4, Orchestrator, func(message *protocol.ControlMessage) {
+		message.ReshareCommit = &protocol.ReshareCommit{}
+	})
+	if _, err := reshareSessions[participants[1].id.id].HandleControl(duplicateCommit); err != nil {
+		t.Fatalf("duplicate ReshareCommit error = %v", err)
+	}
+
+	signStart := &protocol.SessionStart{
+		SessionID:    "session-" + strings.ToLower(string(protocolType)) + "-post-reshare-sign",
+		Protocol:     protocolType,
+		Operation:    protocol.OperationTypeSign,
+		Threshold:    2,
+		Participants: newCommittee,
+		Sign:         &protocol.SignPayload{KeyID: keyID, SigningInput: []byte("post-reshare-message")},
+	}
+	signSessions := createSessions(t, signStart, participants[1:], Orchestrator)
+	signResults := driveSession(t, signStart.SessionID, signSessions, Orchestrator)
+	for id, result := range signResults {
+		if result == nil || result.Signature == nil || len(result.Signature.Signature) == 0 {
+			t.Fatalf("post-reshare signature missing for %s", id)
+		}
+	}
+}
+
+func driveReshareToPrepared(t *testing.T, sessionID string, sessions map[string]*ParticipantSession, Orchestrator OrchestratorFixture) {
+	t.Helper()
+	pending := make([]queuedMessage, 0, 128)
+	results := make(map[string]*Result)
+	for id, session := range sessions {
+		effects, err := session.Start()
+		if err != nil {
+			t.Fatalf("Start() for %s error = %v", id, err)
+		}
+		pending = appendPending(pending, id, effects.PeerMessages)
+	}
+	for id, session := range sessions {
+		control := signedControl(sessionID, 1, Orchestrator, func(message *protocol.ControlMessage) {
+			message.KeyExchange = &protocol.KeyExchangeBegin{ExchangeID: "kx-reshare"}
+		})
+		effects, err := session.HandleControl(control)
+		if err != nil {
+			t.Fatalf("HandleControl(KeyExchange) for %s error = %v", id, err)
+		}
+		pending = appendPending(pending, id, effects.PeerMessages)
+	}
+	processQueue(t, sessions, &pending, results)
+	for id, session := range sessions {
+		control := signedControl(sessionID, 2, Orchestrator, func(message *protocol.ControlMessage) {
+			message.MPCBegin = &protocol.MPCBegin{}
+		})
+		effects, err := session.HandleControl(control)
+		if err != nil {
+			t.Fatalf("HandleControl(MPCBegin) for %s error = %v", id, err)
+		}
+		pending = appendPending(pending, id, effects.PeerMessages)
+	}
+	processQueue(t, sessions, &pending, results)
+}
+
+func signedControl(sessionID string, sequence uint64, Orchestrator OrchestratorFixture, fill func(*protocol.ControlMessage)) *protocol.ControlMessage {
+	message := &protocol.ControlMessage{SessionID: sessionID, Sequence: sequence, OrchestratorID: Orchestrator.id}
+	fill(message)
+	message.Signature = ed25519.Sign(Orchestrator.priv, protocol.MustControlSigningBytes(message))
+	return message
+}
+
 func TestSessionRejectsMPCBeginBeforeKeyExchange(t *testing.T) {
 	participants, Orchestrator, err := newTestParticipants(2)
 	if err != nil {
@@ -205,11 +423,64 @@ func TestNewRejectsLocalIdentityPublicKeyMismatch(t *testing.T) {
 	}
 }
 
+func TestReshareCommitRequiresPreparedAndAbortPreservesActiveShare(t *testing.T) {
+	participants, Orchestrator, err := newTestParticipants(3)
+	if err != nil {
+		t.Fatalf("newTestParticipants() error = %v", err)
+	}
+	start := &protocol.SessionStart{
+		SessionID: "session-reshare-control-phase",
+		Protocol:  protocol.ProtocolTypeEdDSA,
+		Operation: protocol.OperationTypeReshare,
+		Threshold: 1,
+		Participants: []*protocol.SessionParticipant{
+			{ParticipantID: participants[0].id.id, PartyKey: []byte("old-1"), IdentityPublicKey: participants[0].id.pub},
+			{ParticipantID: participants[1].id.id, PartyKey: []byte("old-2"), IdentityPublicKey: participants[1].id.pub},
+		},
+		Reshare: &protocol.ResharePayload{
+			KeyID:        "wallet-1",
+			NewThreshold: 1,
+			NewParticipants: []*protocol.SessionParticipant{
+				{ParticipantID: participants[1].id.id, PartyKey: []byte("new-2"), IdentityPublicKey: participants[1].id.pub},
+				{ParticipantID: participants[2].id.id, PartyKey: []byte("new-3"), IdentityPublicKey: participants[2].id.pub},
+			},
+		},
+	}
+	if err := participants[0].shares.SaveShare(start.Protocol, start.Reshare.KeyID, []byte("active-old-share")); err != nil {
+		t.Fatalf("SaveShare() error = %v", err)
+	}
+	session := createSessions(t, start, participants[:1], Orchestrator)[participants[0].id.id]
+	commit := signedControl(start.SessionID, 1, Orchestrator, func(message *protocol.ControlMessage) {
+		message.ReshareCommit = &protocol.ReshareCommit{}
+	})
+	if _, err := session.HandleControl(commit); !errors.Is(err, ErrReshareCommitPhase) {
+		t.Fatalf("HandleControl(commit before prepared) error = %v, want %v", err, ErrReshareCommitPhase)
+	}
+
+	if err := participants[0].rotations.StageShareRotation(start.Protocol, start.Reshare.KeyID, start.SessionID, storage.ShareRotation{Retire: true}); err != nil {
+		t.Fatalf("StageShareRotation() error = %v", err)
+	}
+	abort := signedControl(start.SessionID, 2, Orchestrator, func(message *protocol.ControlMessage) {
+		message.SessionAbort = &protocol.SessionAbort{Reason: protocol.FailureReasonAborted, Detail: "test abort"}
+	})
+	if _, err := session.HandleControl(abort); err != nil {
+		t.Fatalf("HandleControl(abort) error = %v", err)
+	}
+	active, err := participants[0].shares.LoadShare(start.Protocol, start.Reshare.KeyID)
+	if err != nil {
+		t.Fatalf("LoadShare() error = %v", err)
+	}
+	if string(active) != "active-old-share" {
+		t.Fatalf("active share after abort = %q", active)
+	}
+}
+
 type participantFixture struct {
 	id          *testIdentity
 	lookup      *testPeerLookup
 	preparams   *memoryPreparamsStore
 	shares      *memoryShareStore
+	rotations   *memoryShareRotationStore
 	checkpoints *memorySessionCheckpointStore
 }
 
@@ -234,11 +505,13 @@ func newTestParticipants(count int) ([]participantFixture, OrchestratorFixture, 
 		}
 		identity := &testIdentity{id: fmt.Sprintf("peer-%d", i+1), pub: pub, priv: priv}
 		peerLookup.keys[identity.id] = pub
+		shares := &memoryShareStore{values: map[string][]byte{}}
 		fixtures = append(fixtures, participantFixture{
 			id:          identity,
 			lookup:      peerLookup,
 			preparams:   &memoryPreparamsStore{values: map[string][]byte{}, activeSlots: map[string]string{}},
-			shares:      &memoryShareStore{values: map[string][]byte{}},
+			shares:      shares,
+			rotations:   &memoryShareRotationStore{shares: shares, pending: map[string]storage.ShareRotation{}, committed: map[string]bool{}},
 			checkpoints: &memorySessionCheckpointStore{values: map[string][]byte{}},
 		})
 	}
@@ -262,6 +535,7 @@ func createSessions(t *testing.T, start *protocol.SessionStart, fixtures []parti
 			Orchestrator:       Orchestrator.lookup,
 			Preparams:          fixture.preparams,
 			Shares:             fixture.shares,
+			ShareRotations:     fixture.rotations,
 			SessionCheckpoint:  fixture.checkpoints,
 		})
 		if err != nil {
@@ -474,6 +748,63 @@ func (s *memoryShareStore) LoadShare(protocolType protocol.ProtocolType, keyID s
 
 func (s *memoryShareStore) SaveShare(protocolType protocol.ProtocolType, keyID string, share []byte) error {
 	s.values[s.key(protocolType, keyID)] = append([]byte(nil), share...)
+	return nil
+}
+
+type memoryShareRotationStore struct {
+	shares    *memoryShareStore
+	pending   map[string]storage.ShareRotation
+	committed map[string]bool
+}
+
+func (s *memoryShareRotationStore) rotationKey(protocolType protocol.ProtocolType, keyID, sessionID string) string {
+	return string(protocolType) + ":" + keyID + ":" + sessionID
+}
+
+func (s *memoryShareRotationStore) StageShareRotation(protocolType protocol.ProtocolType, keyID, sessionID string, rotation storage.ShareRotation) error {
+	if err := rotation.Validate(); err != nil {
+		return err
+	}
+	key := s.rotationKey(protocolType, keyID, sessionID)
+	if s.committed[key] {
+		return nil
+	}
+	if existing, ok := s.pending[key]; ok {
+		if existing.Retire != rotation.Retire || !bytes.Equal(existing.Replacement, rotation.Replacement) {
+			return fmt.Errorf("conflicting rotation for %s", key)
+		}
+		return nil
+	}
+	rotation.Replacement = append([]byte(nil), rotation.Replacement...)
+	s.pending[key] = rotation
+	return nil
+}
+
+func (s *memoryShareRotationStore) CommitShareRotation(protocolType protocol.ProtocolType, keyID, sessionID string) error {
+	key := s.rotationKey(protocolType, keyID, sessionID)
+	if s.committed[key] {
+		return nil
+	}
+	rotation, ok := s.pending[key]
+	if !ok {
+		return fmt.Errorf("rotation %s is not staged", key)
+	}
+	if rotation.Retire {
+		delete(s.shares.values, s.shares.key(protocolType, keyID))
+	} else {
+		s.shares.values[s.shares.key(protocolType, keyID)] = append([]byte(nil), rotation.Replacement...)
+	}
+	s.committed[key] = true
+	delete(s.pending, key)
+	return nil
+}
+
+func (s *memoryShareRotationStore) AbortShareRotation(protocolType protocol.ProtocolType, keyID, sessionID string) error {
+	key := s.rotationKey(protocolType, keyID, sessionID)
+	if s.committed[key] {
+		return nil
+	}
+	delete(s.pending, key)
 	return nil
 }
 

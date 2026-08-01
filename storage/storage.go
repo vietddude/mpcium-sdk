@@ -1,6 +1,12 @@
 package storage
 
-import "github.com/fystack/mpcium-sdk/protocol"
+import (
+	"errors"
+
+	"github.com/fystack/mpcium-sdk/protocol"
+)
+
+var ErrInvalidShareRotation = errors.New("storage: share rotation must contain exactly one of replacement or retire")
 
 type PreparamsStore interface {
 	LoadPreparamsSlot(protocol protocol.ProtocolType, slot string) ([]byte, error)
@@ -12,6 +18,30 @@ type PreparamsStore interface {
 type ShareStore interface {
 	LoadShare(protocol protocol.ProtocolType, keyID string) ([]byte, error)
 	SaveShare(protocol protocol.ProtocolType, keyID string, share []byte) error
+}
+
+// ShareRotation is a staged mutation of the active share. Replacement is
+// used by new/overlap members; Retire is used by old-only members. Exactly
+// one field must be set.
+type ShareRotation struct {
+	Replacement []byte `json:"replacement,omitempty"`
+	Retire      bool   `json:"retire,omitempty"`
+}
+
+func (rotation ShareRotation) Validate() error {
+	if (len(rotation.Replacement) > 0) == rotation.Retire {
+		return ErrInvalidShareRotation
+	}
+	return nil
+}
+
+// ShareRotationStore provides the durable two-phase commit boundary for
+// reshare. Implementations must make stage/commit/abort idempotent and the
+// active-share replacement or retirement atomic at its storage key.
+type ShareRotationStore interface {
+	StageShareRotation(protocol protocol.ProtocolType, keyID, sessionID string, rotation ShareRotation) error
+	CommitShareRotation(protocol protocol.ProtocolType, keyID, sessionID string) error
+	AbortShareRotation(protocol protocol.ProtocolType, keyID, sessionID string) error
 }
 
 // SessionCheckpointStore persists the per-session resume checkpoint — a

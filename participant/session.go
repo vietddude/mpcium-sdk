@@ -26,16 +26,18 @@ import (
 )
 
 var (
-	ErrInvalidControlSig    = errors.New("participant: invalid control message signature")
-	ErrInvalidPeerSig       = errors.New("participant: invalid peer message signature")
-	ErrReplayControl        = errors.New("participant: replayed control message sequence")
-	ErrPartyNotRunning      = errors.New("participant: local tss party is not running")
-	ErrUnsupportedOperation = errors.New("participant: operation is unsupported")
-	ErrKeyExchangeRequired  = errors.New("participant: key exchange required before MPC begin")
-	ErrKeyExchangeState     = errors.New("participant: invalid key exchange state")
-	ErrPreparamsRequired    = errors.New("participant: preparams store is required for ecdsa keygen")
-	ErrPreparamsSlotMissing = errors.New("participant: active preparams slot is missing")
-	ErrPreparamsBlobMissing = errors.New("participant: preparams blob is missing")
+	ErrInvalidControlSig     = errors.New("participant: invalid control message signature")
+	ErrInvalidPeerSig        = errors.New("participant: invalid peer message signature")
+	ErrReplayControl         = errors.New("participant: replayed control message sequence")
+	ErrPartyNotRunning       = errors.New("participant: local tss party is not running")
+	ErrUnsupportedOperation  = errors.New("participant: operation is unsupported")
+	ErrKeyExchangeRequired   = errors.New("participant: key exchange required before MPC begin")
+	ErrKeyExchangeState      = errors.New("participant: invalid key exchange state")
+	ErrPreparamsRequired     = errors.New("participant: preparams store is required for ecdsa keygen")
+	ErrPreparamsSlotMissing  = errors.New("participant: active preparams slot is missing")
+	ErrPreparamsBlobMissing  = errors.New("participant: preparams blob is missing")
+	ErrShareRotationRequired = errors.New("participant: share rotation store is required for reshare")
+	ErrReshareCommitPhase    = errors.New("participant: reshare commit received outside prepared phase")
 )
 
 const (
@@ -69,6 +71,9 @@ type Config struct {
 	// Shares loads existing key shares for signing and persists newly
 	// generated shares produced by keygen.
 	Shares storage.ShareStore
+	// ShareRotations stages and commits replacement/retirement mutations for
+	// RESHARE. It is required only for reshare sessions.
+	ShareRotations storage.ShareRotationStore
 	// SessionCheckpoint optionally persists the per-session resume checkpoint
 	// (status, sequence counters, key-exchange progress) so a session can
 	// recover across restarts. Nil disables persistence.
@@ -174,6 +179,19 @@ type ParticipantSession struct {
 	// only during EdDSA signing.
 	eddsaSignEndCh chan *commonSig.SignatureData
 
+	// reshareParties contains one local TSS party per committee role. An
+	// overlapping participant owns both entries.
+	reshareParties      map[protocol.CommitteeRole]tss.Party
+	partyByRole         map[protocol.CommitteeRole]map[string]*tss.PartyID
+	ecdsaReshareEndCh   map[protocol.CommitteeRole]chan *ecdsaKeygen.LocalPartySaveData
+	eddsaReshareEndCh   map[protocol.CommitteeRole]chan *eddsaKeygen.LocalPartySaveData
+	reshareRoleDone     map[protocol.CommitteeRole]bool
+	reshareOldPublicKey []byte
+	reshareReplacement  []byte
+	reshareNewPublicKey []byte
+	preparedReshare     *protocol.ReshareResult
+	reshareCommitted    bool
+
 	// sequence is the monotonically increasing counter stamped on every
 	// outbound PeerMessage and SessionEvent produced by this participant.
 	sequence uint64
@@ -233,8 +251,15 @@ func New(cfg Config) (*ParticipantSession, error) {
 	if cfg.Orchestrator == nil {
 		return nil, errors.New("participant: missing Orchestrator lookup")
 	}
+	if cfg.Start.Operation == protocol.OperationTypeReshare && cfg.ShareRotations == nil {
+		return nil, ErrShareRotationRequired
+	}
 
-	sorted := protocol.CanonicalParticipants(cfg.Start.Participants)
+	sessionParticipants := cfg.Start.Participants
+	if cfg.Start.Operation == protocol.OperationTypeReshare {
+		sessionParticipants = unionParticipants(cfg.Start.Participants, cfg.Start.Reshare.NewParticipants)
+	}
+	sorted := protocol.CanonicalParticipants(sessionParticipants)
 	partyByID := make(map[string]*tss.PartyID, len(sorted))
 	for _, participant := range sorted {
 		key := partySortKey(participant)
@@ -251,6 +276,15 @@ func New(cfg Config) (*ParticipantSession, error) {
 		sortedParticipants: sorted,
 		partyByID:          partyByID,
 		peerX25519Pub:      make(map[string][]byte, len(sorted)),
+		reshareParties:     make(map[protocol.CommitteeRole]tss.Party, 2),
+		partyByRole:        make(map[protocol.CommitteeRole]map[string]*tss.PartyID, 2),
+		ecdsaReshareEndCh:  make(map[protocol.CommitteeRole]chan *ecdsaKeygen.LocalPartySaveData, 2),
+		eddsaReshareEndCh:  make(map[protocol.CommitteeRole]chan *eddsaKeygen.LocalPartySaveData, 2),
+		reshareRoleDone:    make(map[protocol.CommitteeRole]bool, 2),
+	}
+	if cfg.Start.Operation == protocol.OperationTypeReshare {
+		session.partyByRole[protocol.CommitteeRoleOld] = buildPartyIDs(cfg.Start.Participants)
+		session.partyByRole[protocol.CommitteeRoleNew] = buildPartyIDs(cfg.Start.Reshare.NewParticipants)
 	}
 	if err := session.loadCheckpoint(); err != nil {
 		return nil, err
@@ -328,6 +362,10 @@ func (s *ParticipantSession) HandleControl(msg *protocol.ControlMessage) (Action
 			return Actions{}, err
 		}
 		return actions, nil
+	case msg.ReshareCommit != nil:
+		return s.commitReshare()
+	case msg.SessionAbort != nil:
+		return s.abort(msg.SessionAbort)
 	default:
 		return Actions{}, protocol.ErrInvalidControlMessageBody
 	}
@@ -360,14 +398,6 @@ func (s *ParticipantSession) HandlePeer(msg *protocol.PeerMessage) (Actions, err
 		return actions, nil
 	}
 
-	if s.party == nil || !s.party.Running() {
-		return Actions{}, ErrPartyNotRunning
-	}
-
-	from := s.partyByID[msg.FromParticipantID]
-	if from == nil {
-		return Actions{}, fmt.Errorf("%w: unknown peer %s", protocol.ErrInvalidRouting, msg.FromParticipantID)
-	}
 	if msg.MPCPacket == nil {
 		return Actions{}, protocol.ErrInvalidPeerMessageBody
 	}
@@ -376,7 +406,22 @@ func (s *ParticipantSession) HandlePeer(msg *protocol.PeerMessage) (Actions, err
 	if err != nil {
 		return s.fail(protocol.FailureReasonDecryptFailed, err.Error()), err
 	}
-	if _, err := s.party.UpdateFromBytes(wirePayload, from, msg.Broadcast); err != nil {
+	party := s.party
+	from := s.partyByID[msg.FromParticipantID]
+	if s.cfg.Start.Operation == protocol.OperationTypeReshare {
+		if !committeeRoleIsSet(msg.MPCPacket.FromCommittee) || !committeeRoleIsSet(msg.MPCPacket.ToCommittee) {
+			return Actions{}, fmt.Errorf("%w: reshare packet requires committee roles", protocol.ErrInvalidRouting)
+		}
+		party = s.reshareParties[msg.MPCPacket.ToCommittee]
+		from = s.partyByRole[msg.MPCPacket.FromCommittee][msg.FromParticipantID]
+	}
+	if party == nil || !party.Running() {
+		return Actions{}, ErrPartyNotRunning
+	}
+	if from == nil {
+		return Actions{}, fmt.Errorf("%w: unknown peer %s", protocol.ErrInvalidRouting, msg.FromParticipantID)
+	}
+	if _, err := party.UpdateFromBytes(wirePayload, from, msg.Broadcast); err != nil {
 		return s.fail(protocol.FailureReasonTSSError, err.Error()), fmt.Errorf("participant: update from bytes: %w", err)
 	}
 
@@ -391,7 +436,7 @@ func (s *ParticipantSession) HandlePeer(msg *protocol.PeerMessage) (Actions, err
 }
 
 func (s *ParticipantSession) Tick(_ time.Time) (Actions, error) {
-	if s.party == nil || !s.party.Running() {
+	if !s.anyPartyRunning() {
 		return Actions{}, nil
 	}
 	actions, err := s.collectRuntimeActions()
@@ -406,11 +451,24 @@ func (s *ParticipantSession) Tick(_ time.Time) (Actions, error) {
 
 func (s *ParticipantSession) Status() Status {
 	status := s.status
+	waitingFor := make(map[string]struct{})
 	if s.party != nil && s.party.Running() {
-		waiting := s.party.WaitingFor()
-		status.WaitingFor = make([]string, 0, len(waiting))
-		for _, partyID := range waiting {
-			status.WaitingFor = append(status.WaitingFor, partyID.Id)
+		for _, partyID := range s.party.WaitingFor() {
+			waitingFor[partyID.Id] = struct{}{}
+		}
+	}
+	for _, party := range s.reshareParties {
+		if party == nil || !party.Running() {
+			continue
+		}
+		for _, partyID := range party.WaitingFor() {
+			waitingFor[partyID.Id] = struct{}{}
+		}
+	}
+	if len(waitingFor) > 0 {
+		status.WaitingFor = make([]string, 0, len(waitingFor))
+		for participantID := range waitingFor {
+			status.WaitingFor = append(status.WaitingFor, participantID)
 		}
 		sort.Strings(status.WaitingFor)
 	}
@@ -546,6 +604,9 @@ func (s *ParticipantSession) signSessionEvent(msg *protocol.SessionEvent) error 
 }
 
 func (s *ParticipantSession) startLocalParty() error {
+	if s.cfg.Start.Operation == protocol.OperationTypeReshare {
+		return s.startReshareParties()
+	}
 	if s.party != nil && s.party.Running() {
 		return nil
 	}
@@ -664,6 +725,9 @@ func (s *ParticipantSession) resolveECDSAPreparams() (*ecdsaKeygen.LocalPreParam
 
 func (s *ParticipantSession) collectRuntimeActions() (Actions, error) {
 	actions := Actions{}
+	if s.outCh == nil {
+		return s.collectTerminalResult()
+	}
 	idle := 10 * time.Millisecond
 	timer := time.NewTimer(idle)
 	defer timer.Stop()
@@ -699,6 +763,9 @@ ENDS:
 }
 
 func (s *ParticipantSession) collectTerminalResult() (Actions, error) {
+	if s.cfg.Start.Operation == protocol.OperationTypeReshare {
+		return s.collectReshareTerminalResult()
+	}
 	if s.ecdsaKeygenEndCh != nil {
 		select {
 		case data := <-s.ecdsaKeygenEndCh:
@@ -806,7 +873,7 @@ func (s *ParticipantSession) complete(result *Result) Actions {
 	if err := s.signSessionEvent(event); err != nil {
 		return s.fail(protocol.FailureReasonTSSError, err.Error())
 	}
-	_ = s.dropCheckpoint()
+	_ = s.saveCheckpoint()
 	return Actions{
 		Result:        result,
 		SessionEvents: []*protocol.SessionEvent{event},
@@ -815,6 +882,9 @@ func (s *ParticipantSession) complete(result *Result) Actions {
 }
 
 func (s *ParticipantSession) fail(reason protocol.FailureReason, details string) Actions {
+	if s.cfg.Start.Operation == protocol.OperationTypeReshare && !s.reshareCommitted && s.cfg.ShareRotations != nil {
+		_ = s.cfg.ShareRotations.AbortShareRotation(s.cfg.Start.Protocol, s.cfg.Start.Reshare.KeyID, s.cfg.Start.SessionID)
+	}
 	s.status.Phase = protocol.ParticipantPhaseFailed
 	s.status.FailureReason = reason
 	s.status.FailureDetails = details
@@ -822,7 +892,7 @@ func (s *ParticipantSession) fail(reason protocol.FailureReason, details string)
 	event := s.newEvent()
 	event.SessionFailed = &protocol.SessionFailed{Reason: reason, Detail: details}
 	_ = s.signSessionEvent(event)
-	_ = s.dropCheckpoint()
+	_ = s.saveCheckpoint()
 	return Actions{
 		SessionEvents: []*protocol.SessionEvent{event},
 		Cleanup:       &CleanupHint{SessionID: s.cfg.Start.SessionID, DropCheckpoint: true},
@@ -839,6 +909,9 @@ func (s *ParticipantSession) newEvent() *protocol.SessionEvent {
 }
 
 func (s *ParticipantSession) makePeerMessages(message tss.Message) ([]*protocol.PeerMessage, error) {
+	if s.cfg.Start.Operation == protocol.OperationTypeReshare {
+		return s.makeResharePeerMessages(message)
+	}
 	payload, routing, err := message.WireBytes()
 	if err != nil {
 		return nil, err
@@ -909,6 +982,8 @@ func (s *ParticipantSession) saveCheckpoint() error {
 		s.keyExchangeDone,
 		s.peerX25519Pub,
 		s.preparamsSlot,
+		s.preparedReshare,
+		s.reshareCommitted,
 	)
 	if err != nil {
 		return err
@@ -924,7 +999,7 @@ func (s *ParticipantSession) loadCheckpoint() error {
 	if err != nil || len(blob) == 0 {
 		return nil
 	}
-	status, controlSeq, sequence, activeExchangeID, keyExchangeDone, peerX25519, preparamsSlot, err := decodeStatusCheckpoint(blob)
+	status, controlSeq, sequence, activeExchangeID, keyExchangeDone, peerX25519, preparamsSlot, preparedReshare, reshareCommitted, err := decodeStatusCheckpoint(blob)
 	if err != nil {
 		return err
 	}
@@ -936,6 +1011,8 @@ func (s *ParticipantSession) loadCheckpoint() error {
 		s.keyExchangeDone = keyExchangeDone
 		s.peerX25519Pub = clonePeerKeyMap(peerX25519)
 		s.preparamsSlot = preparamsSlot
+		s.preparedReshare = cloneReshareResult(preparedReshare)
+		s.reshareCommitted = reshareCommitted
 		s.kxLocalKey = nil
 		if s.activeExchangeID != "" && !s.keyExchangeDone {
 			s.status.Phase = protocol.ParticipantPhaseKeyExchange
@@ -960,6 +1037,8 @@ type statusCheckpoint struct {
 	KeyExchangeDone  bool
 	PeerX25519Pub    map[string][]byte
 	PreparamsSlot    string
+	PreparedReshare  *protocol.ReshareResult
+	ReshareCommitted bool
 }
 
 func encodeStatusCheckpoint(
@@ -969,10 +1048,12 @@ func encodeStatusCheckpoint(
 	keyExchangeDone bool,
 	peerX25519 map[string][]byte,
 	preparamsSlot string,
+	preparedReshare *protocol.ReshareResult,
+	reshareCommitted bool,
 ) ([]byte, error) {
 	var buffer bytes.Buffer
 	checkpoint := statusCheckpoint{
-		Version:          2,
+		Version:          3,
 		Status:           status,
 		ControlSeq:       controlSeq,
 		Sequence:         sequence,
@@ -980,6 +1061,8 @@ func encodeStatusCheckpoint(
 		KeyExchangeDone:  keyExchangeDone,
 		PeerX25519Pub:    clonePeerKeyMap(peerX25519),
 		PreparamsSlot:    preparamsSlot,
+		PreparedReshare:  cloneReshareResult(preparedReshare),
+		ReshareCommitted: reshareCommitted,
 	}
 	if err := gob.NewEncoder(&buffer).Encode(&checkpoint); err != nil {
 		return nil, err
@@ -987,12 +1070,12 @@ func encodeStatusCheckpoint(
 	return buffer.Bytes(), nil
 }
 
-func decodeStatusCheckpoint(blob []byte) (Status, uint64, uint64, string, bool, map[string][]byte, string, error) {
+func decodeStatusCheckpoint(blob []byte) (Status, uint64, uint64, string, bool, map[string][]byte, string, *protocol.ReshareResult, bool, error) {
 	checkpoint := statusCheckpoint{}
 	if err := gob.NewDecoder(bytes.NewReader(blob)).Decode(&checkpoint); err != nil {
-		return Status{}, 0, 0, "", false, nil, "", err
+		return Status{}, 0, 0, "", false, nil, "", nil, false, err
 	}
-	return checkpoint.Status, checkpoint.ControlSeq, checkpoint.Sequence, checkpoint.ActiveExchangeID, checkpoint.KeyExchangeDone, clonePeerKeyMap(checkpoint.PeerX25519Pub), checkpoint.PreparamsSlot, nil
+	return checkpoint.Status, checkpoint.ControlSeq, checkpoint.Sequence, checkpoint.ActiveExchangeID, checkpoint.KeyExchangeDone, clonePeerKeyMap(checkpoint.PeerX25519Pub), checkpoint.PreparamsSlot, cloneReshareResult(checkpoint.PreparedReshare), checkpoint.ReshareCommitted, nil
 }
 
 func encodeECDSAKeygenShare(data *ecdsaKeygen.LocalPartySaveData) ([]byte, error) {

@@ -164,6 +164,83 @@ func TestProtocolHelpers(t *testing.T) {
 	}
 }
 
+func TestValidateReshareCommittees(t *testing.T) {
+	t.Parallel()
+
+	valid := func() *SessionStart {
+		return &SessionStart{
+			SessionID: "reshare-1",
+			Protocol:  ProtocolTypeECDSA,
+			Operation: OperationTypeReshare,
+			Threshold: 1,
+			Participants: []*SessionParticipant{
+				{ParticipantID: "p1", PartyKey: []byte("old-p1"), IdentityPublicKey: []byte("identity-p1")},
+				{ParticipantID: "p2", PartyKey: []byte("old-p2"), IdentityPublicKey: []byte("identity-p2")},
+			},
+			Reshare: &ResharePayload{
+				KeyID:        "wallet-1",
+				NewThreshold: 1,
+				NewParticipants: []*SessionParticipant{
+					{ParticipantID: "p2", PartyKey: []byte("new-p2"), IdentityPublicKey: []byte("identity-p2")},
+					{ParticipantID: "p3", PartyKey: []byte("new-p3"), IdentityPublicKey: []byte("identity-p3")},
+				},
+			},
+		}
+	}
+
+	tests := []struct {
+		name    string
+		mutate  func(*SessionStart)
+		wantErr error
+	}{
+		{name: "valid overlap", mutate: func(*SessionStart) {}},
+		{
+			name: "new committee required",
+			mutate: func(start *SessionStart) {
+				start.Reshare.NewParticipants = nil
+			},
+			wantErr: ErrInvalidPayload,
+		},
+		{
+			name: "new threshold valid",
+			mutate: func(start *SessionStart) {
+				start.Reshare.NewThreshold = 2
+			},
+			wantErr: ErrInvalidThreshold,
+		},
+		{
+			name: "overlap identity is stable",
+			mutate: func(start *SessionStart) {
+				start.Reshare.NewParticipants[0].IdentityPublicKey = []byte("changed")
+			},
+			wantErr: ErrReshareIdentityMismatch,
+		},
+		{
+			name: "overlap party key rotates",
+			mutate: func(start *SessionStart) {
+				start.Reshare.NewParticipants[0].PartyKey = []byte("old-p2")
+			},
+			wantErr: ErrResharePartyKeyNotRotated,
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			start := valid()
+			tt.mutate(start)
+			err := ValidateSessionStart(start)
+			if tt.wantErr == nil && err != nil {
+				t.Fatalf("ValidateSessionStart() unexpected error = %v", err)
+			}
+			if tt.wantErr != nil && !isErr(err, tt.wantErr) {
+				t.Fatalf("ValidateSessionStart() error = %v, want %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
 func TestCloneSessionStartDeepCopiesWireFields(t *testing.T) {
 	start := &SessionStart{
 		SessionID: "sess-1",
@@ -266,6 +343,17 @@ func TestCloneProtocolResultDeepCopiesWireFields(t *testing.T) {
 	if string(clonedSignature.Signature.PublicKey) != "pub" {
 		t.Fatalf("public key was not deep copied: %q", string(clonedSignature.Signature.PublicKey))
 	}
+
+	reshare := &Result{Reshare: &ReshareResult{
+		KeyID:        "wallet-1",
+		PublicKey:    []byte("public"),
+		NewThreshold: 2,
+	}}
+	clonedReshare := CloneProtocolResult(reshare)
+	reshare.Reshare.PublicKey[0] = 'X'
+	if string(clonedReshare.Reshare.PublicKey) != "public" {
+		t.Fatalf("reshare public key was not deep copied: %q", string(clonedReshare.Reshare.PublicKey))
+	}
 }
 
 func TestValidateControlMessage(t *testing.T) {
@@ -300,6 +388,21 @@ func TestValidateControlMessage(t *testing.T) {
 	keyExchange.KeyExchange.ExchangeID = ""
 	if err := ValidateControlMessage(keyExchange); !isErr(err, ErrInvalidControlMessageBody) {
 		t.Fatalf("ValidateControlMessage(missing exchange id) error = %v", err)
+	}
+
+	commit := &ControlMessage{
+		SessionID:      "session-1",
+		OrchestratorID: "orch-1",
+		Sequence:       3,
+		Signature:      []byte{1},
+		ReshareCommit:  &ReshareCommit{},
+	}
+	if err := ValidateControlMessage(commit); err != nil {
+		t.Fatalf("ValidateControlMessage(reshare commit) error = %v", err)
+	}
+	commit.SessionAbort = &SessionAbort{Reason: FailureReasonAborted}
+	if err := ValidateControlMessage(commit); !isErr(err, ErrInvalidControlMessageBody) {
+		t.Fatalf("ValidateControlMessage(body collision) error = %v", err)
 	}
 }
 
@@ -373,6 +476,40 @@ func TestValidatePeerMessage(t *testing.T) {
 			},
 			wantErr: ErrInvalidRouting,
 		},
+		{
+			name: "valid reshare role routing",
+			msg: &PeerMessage{
+				SessionID:         "session-1",
+				Sequence:          1,
+				FromParticipantID: "p1",
+				ToParticipantID:   "p2",
+				Phase:             ParticipantPhaseMPCRunning,
+				Signature:         []byte{1},
+				MPCPacket: &MPCPacket{
+					Payload:       []byte{1},
+					Nonce:         []byte{1},
+					FromCommittee: CommitteeRoleOld,
+					ToCommittee:   CommitteeRoleNew,
+				},
+			},
+		},
+		{
+			name: "reshare role routing must be paired",
+			msg: &PeerMessage{
+				SessionID:         "session-1",
+				Sequence:          1,
+				FromParticipantID: "p1",
+				ToParticipantID:   "p2",
+				Phase:             ParticipantPhaseMPCRunning,
+				Signature:         []byte{1},
+				MPCPacket: &MPCPacket{
+					Payload:       []byte{1},
+					Nonce:         []byte{1},
+					FromCommittee: CommitteeRoleOld,
+				},
+			},
+			wantErr: ErrInvalidRouting,
+		},
 	}
 
 	for _, tt := range tests {
@@ -423,6 +560,33 @@ func TestSigningBytesDeterministic(t *testing.T) {
 	sig := ed25519.Sign(priv, first)
 	if !ed25519.Verify(pub, second, sig) {
 		t.Fatalf("Verify() returned false")
+	}
+}
+
+func TestPeerSignatureCoversCommitteeRouting(t *testing.T) {
+	t.Parallel()
+
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("GenerateKey() error = %v", err)
+	}
+	message := &PeerMessage{
+		SessionID:         "session-1",
+		Sequence:          1,
+		FromParticipantID: "p1",
+		ToParticipantID:   "p2",
+		Phase:             ParticipantPhaseMPCRunning,
+		MPCPacket: &MPCPacket{
+			Payload:       []byte("ciphertext"),
+			Nonce:         []byte("nonce"),
+			FromCommittee: CommitteeRoleOld,
+			ToCommittee:   CommitteeRoleNew,
+		},
+	}
+	signature := ed25519.Sign(priv, MustPeerSigningBytes(message))
+	message.MPCPacket.ToCommittee = CommitteeRoleOld
+	if ed25519.Verify(pub, MustPeerSigningBytes(message), signature) {
+		t.Fatal("signature remained valid after committee route tamper")
 	}
 }
 
@@ -494,6 +658,19 @@ func TestValidateSessionEvent(t *testing.T) {
 	invalid.Signature = nil
 	if err := ValidateSessionEvent(&invalid); !isErr(err, ErrMissingSignature) {
 		t.Fatalf("ValidateSessionEvent() error = %v, want %v", err, ErrMissingSignature)
+	}
+
+	prepared := &SessionEvent{
+		SessionID:     "session-1",
+		ParticipantID: "p1",
+		Sequence:      2,
+		Signature:     []byte{1},
+		ResharePrepared: &ResharePrepared{Result: &ReshareResult{
+			KeyID: "wallet-1", PublicKey: []byte("public"), NewThreshold: 1,
+		}},
+	}
+	if err := ValidateSessionEvent(prepared); err != nil {
+		t.Fatalf("ValidateSessionEvent(reshare prepared) error = %v", err)
 	}
 }
 
